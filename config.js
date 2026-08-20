@@ -16,6 +16,6 @@
 // ---------------------------------------------------------------------------
 window.SHMAYBE_CONFIG = {
   // Supabase → Project Settings → API
-  SUPABASE_URL: "",       // e.g. "https://abcd1234.supabase.co"
-  SUPABASE_ANON_KEY: "",  // the public "anon" / "publishable" key
+  SUPABASE_URL: "https://czdnyspkhiaaqgakyqxm.supabase.co",
+  SUPABASE_ANON_KEY: "sb_publishable_OL18VSOPWVcJi4Z6CuF0_Q_iA5NSA9d",
 };

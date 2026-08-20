@@ -184,6 +184,13 @@ begin
     returning id into v_part;
   end if;
 
+  -- Naming the first activity counts as being up for it, the same way
+  -- proposing one later does.
+  if v_part is not null and v_act is not null then
+    insert into public.interests (participant_id, activity_id, level)
+    values (v_part, v_act, 'yes');
+  end if;
+
   return jsonb_build_object('slug', v_slug, 'participantId', v_part, 'token', v_token);
 end;
 $$;
