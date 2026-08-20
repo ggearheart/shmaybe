@@ -261,8 +261,18 @@ export function verdict(trip, asOf = todayYMD()) {
   if (!ranked.length) return { tone: 'bad', text: 'No dates left in the window. Widen it.' };
 
   const full = ranked.filter(s => s.everyone);
+  const dates = n => `${n} ${n === 1 ? 'date works' : 'dates work'}`;
+
+  // With one person in, "works for all 1" is nonsense — and it's the state
+  // every plan passes through while the first replies trickle in.
+  if (active.length === 1) {
+    const who = active[0].name || 'the one person in';
+    return full.length
+      ? { tone: 'good', text: `${dates(full.length)} for ${who} — still waiting on everyone else.` }
+      : { tone: 'bad', text: `No date in the window works for ${who}.` };
+  }
   if (full.length) {
-    return { tone: 'good', text: `${full.length} ${full.length === 1 ? 'date works' : 'dates work'} for all ${active.length}.` };
+    return { tone: 'good', text: `${dates(full.length)} for all ${active.length}.` };
   }
   const top = ranked[0];
   return {
