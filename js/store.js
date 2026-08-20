@@ -3,7 +3,8 @@
 
 import { todayYMD, addDays } from './dates.js';
 
-const KEY = 'canyoujoin.v1';
+const KEY = 'shmaybe.v1';
+const LEGACY_KEYS = ['canyoujoin.v1'];   // the app was called "Can You Join?" first
 
 let state = { trips: [], activeId: null };
 const listeners = [];
@@ -43,7 +44,14 @@ function migrate(trip) {
 
 export function load() {
   try {
-    const raw = localStorage.getItem(KEY);
+    let raw = localStorage.getItem(KEY);
+    if (!raw) {
+      // Carry trips over from a previous name rather than silently losing them.
+      for (const old of LEGACY_KEYS) {
+        const legacy = localStorage.getItem(old);
+        if (legacy) { raw = legacy; localStorage.setItem(KEY, legacy); break; }
+      }
+    }
     if (raw) {
       const parsed = JSON.parse(raw);
       state = { trips: (parsed.trips || []).map(migrate), activeId: parsed.activeId || null };

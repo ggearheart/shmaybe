@@ -1,8 +1,8 @@
-# Can You Join?
+# Shmaybe
 
-A scheduling aid for the awkward middle of planning a group trip: you've texted
-five people, they've each replied with a different flavour of "yes, but…", and
-now you have to hold all of it in your head at once.
+*Maybe, shmaybe.* A scheduling aid for the awkward middle of planning a group
+trip: you've texted five people, they've each replied with a different flavour
+of "yes, but…", and now you have to hold all of it in your head at once.
 
 This holds it for you.
 
@@ -64,7 +64,8 @@ It's static — open `index.html`, or serve the folder:
 python3 -m http.server 4321 --directory .
 ```
 
-Deploys to GitHub Pages as-is (`.nojekyll` is already here).
+Deploys to GitHub Pages as-is (`.nojekyll` is already here). Live at
+<https://ggearheart.github.io/shmaybe/>.
 
 ## Layout
 
