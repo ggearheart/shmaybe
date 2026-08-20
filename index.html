@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Can You Join?</title>
+<meta name="description" content="Find the most inclusive date for a group trip from messy text-message constraints.">
+<meta name="theme-color" content="#0f766e">
+<link rel="stylesheet" href="styles.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛶</text></svg>">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-row">
+    <h1 class="wordmark">Can&nbsp;You&nbsp;Join<span>?</span></h1>
+    <div class="topbar-actions">
+      <select id="trip-picker" aria-label="Choose trip"></select>
+      <button id="menu-btn" class="icon-btn" aria-label="Trip options" title="Trip options">⋯</button>
+    </div>
+  </div>
+  <div id="verdict" class="verdict" role="status" aria-live="polite"></div>
+</header>
+
+<nav class="tabs" role="tablist">
+  <button class="tab is-active" data-tab="people" role="tab">People</button>
+  <button class="tab" data-tab="when" role="tab">When</button>
+  <button class="tab" data-tab="ask" role="tab">Ask</button>
+</nav>
+
+<main>
+  <section id="panel-people" class="panel is-active">
+    <div class="card trip-setup">
+      <label class="field">
+        <span>What are you planning?</span>
+        <input id="trip-title" type="text" placeholder="Kayak to see the bats">
+      </label>
+      <div class="field-row">
+        <label class="field">
+          <span>No earlier than</span>
+          <input id="win-start" type="date">
+        </label>
+        <label class="field">
+          <span>No later than</span>
+          <input id="win-end" type="date">
+        </label>
+      </div>
+      <p class="hint" id="window-hint"></p>
+    </div>
+
+    <div id="people-list"></div>
+
+    <form id="add-person" class="add-person">
+      <input id="new-name" type="text" placeholder="Add someone — first name is fine" autocomplete="off">
+      <button type="submit" class="btn btn-primary">Add</button>
+    </form>
+  </section>
+
+  <section id="panel-when" class="panel">
+    <div class="card probe">
+      <h2>Test a hypothesis</h2>
+      <p class="hint">Before you text anyone, check whether a pattern is even worth asking about. Logged so you don't ask twice.</p>
+      <div id="probe-days" class="daypicker" role="group" aria-label="Weekdays to test"></div>
+      <div class="probe-actions">
+        <button id="probe-run" class="btn btn-primary">Evaluate &amp; log</button>
+        <button id="probe-clear" class="btn btn-ghost">Clear</button>
+      </div>
+      <div id="probe-result"></div>
+    </div>
+
+    <div id="hypothesis-log"></div>
+    <div id="results"></div>
+  </section>
+
+  <section id="panel-ask" class="panel">
+    <div id="drafts"></div>
+  </section>
+</main>
+
+<dialog id="menu-dialog">
+  <h2>Trips &amp; data</h2>
+  <div class="menu-actions">
+    <button id="act-new" class="btn">New trip</button>
+    <button id="act-rename" class="btn">Rename this trip</button>
+    <button id="act-export" class="btn">Export all trips (.json)</button>
+    <button id="act-import" class="btn">Import a .json file</button>
+    <button id="act-demo" class="btn">Load the bat-kayak example</button>
+    <button id="act-delete" class="btn btn-danger">Delete this trip</button>
+  </div>
+  <p class="hint">Everything is stored in this browser only. Export if you want it on another device.</p>
+  <form method="dialog"><button class="btn btn-primary">Done</button></form>
+</dialog>
+
+<input id="import-file" type="file" accept="application/json,.json" hidden>
+
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
