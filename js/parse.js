@@ -32,6 +32,37 @@ const NUM_PATTERN = `(\\d+|${Object.keys(NUM_WORDS).sort((a, b) => b.length - a.
 
 const NEGATIVE_NEAR = /\b(not|no|never|except|apart from|other than|besides|cant|can't|cannot|unavailable|away|out of town|busy|avoid|anything but|any day but|but not)\b/;
 
+// A conditional clause reverses the meaning of everything in it. "I could do a
+// Monday if we go after 5" is an *offer*, not a restriction — treating that
+// "Monday" as a hard constraint would be exactly backwards.
+const COND_TRIGGER = /\b(if|as long as|so long as|provided that|provided|assuming)\b/;
+
+/** Break a reply into clauses, keeping each one's offset in the original. */
+function segmentsOf(text) {
+  const out = [];
+  const re = /[.!?;\n]+|,?\s+(?:but|though|however|although)\s+/g;
+  let last = 0, m;
+  while ((m = re.exec(text))) {
+    if (m.index > last) out.push({ start: last, end: m.index, text: text.slice(last, m.index) });
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) out.push({ start: last, end: text.length, text: text.slice(last) });
+  return out;
+}
+
+function conditionalSpans(text) {
+  return segmentsOf(text)
+    .map(seg => {
+      const m = COND_TRIGGER.exec(seg.text);
+      if (!m) return null;
+      const condition = seg.text.slice(m.index + m[0].length).trim().replace(/^that\s+/, '');
+      return { ...seg, condition: condition || seg.text.trim(), scopeText: seg.text.slice(0, m.index) };
+    })
+    .filter(Boolean);
+}
+
+const inSpans = (spans, i) => spans.some(sp => i >= sp.start && i < sp.end);
+
 function findDayMentions(text) {
   const hits = [];
   for (let wd = 0; wd < 7; wd++) {
@@ -132,9 +163,13 @@ export function parseReply(raw, win) {
 
   const status = detectStatus(text);
 
+  // Anything inside a conditional clause is an offer, handled separately below.
+  const condSpans = conditionalSpans(text);
+  const hard = i => !inSpans(condSpans, i);
+
   // --- Wide-open flexibility ------------------------------------------------
-  if (/\b(any day|anytime|any time|whenever|whatever works|flexible|all good|works for me|open)\b/.test(text)
-      && !NEGATIVE_NEAR.test(text)) {
+  const flexAt = text.search(/\b(any day|anytime|any time|whenever|whatever works|flexible|all good|works for me|open)\b/);
+  if (flexAt >= 0 && hard(flexAt) && !NEGATIVE_NEAR.test(text)) {
     push('flex', 'Any day works', 'Clears their weekday restrictions', { weekdays: [] });
   }
 
@@ -142,9 +177,9 @@ export function parseReply(raw, win) {
   // --- pair of sets, so "weekends or Fridays" becomes a single suggestion. ---
   const positive = new Set(), negative = new Set();
 
-  const addGroup = (re, days, label) => {
+  const addGroup = (re, days) => {
     const i = text.search(re);
-    if (i < 0) return;
+    if (i < 0 || !hard(i)) return;
     const target = isNegated(text, i) ? negative : positive;
     days.forEach(d => target.add(d));
   };
@@ -152,6 +187,7 @@ export function parseReply(raw, win) {
   addGroup(/\bweekdays?\b/, [1, 2, 3, 4, 5]);
 
   for (const h of findDayMentions(text)) {
+    if (!hard(h.index)) continue;
     (isNegated(text, h.index) ? negative : positive).add(h.weekday);
   }
 
@@ -197,7 +233,7 @@ export function parseReply(raw, win) {
   // --- Specific dates -------------------------------------------------------
   const dates = findDateMentions(text, win);
   const weekOfSpans = [...text.matchAll(/\bweek of\b/g)].map(m => m.index);
-  const loose = dates.filter(d =>
+  const loose = dates.filter(d => hard(d.index) &&
     !weekOfSpans.some(i => d.index > i && d.index - i < 24) && !isNegated(text, d.index));
 
   // "the 19th or the 26th could work" — offer the whole short list in one tap.
@@ -208,6 +244,7 @@ export function parseReply(raw, win) {
   }
 
   for (const d of dates) {
+    if (!hard(d.index)) continue;                                          // it's an offer, see below
     if (weekOfSpans.some(i => d.index > i && d.index - i < 24)) continue;  // already handled
     const neg = isNegated(text, d.index);
     const only = /\b(only|just|nothing but)\b/.test(text.slice(Math.max(0, d.index - 40), d.index));
@@ -231,6 +268,30 @@ export function parseReply(raw, win) {
     if (n > 0 && n < 400) {
       push('notice', `Needs ${n} days notice`, 'Rules out dates that are too soon', { noticeDays: n });
     }
+  }
+
+  // --- Conditional offers ("opportunities to participate") ----------------
+  for (const span of condSpans) {
+    const scopeDays = findDayMentions(span.scopeText || span.text).map(h => h.weekday);
+    const scopeDates = findDateMentions(span.scopeText || span.text, win).map(d => d.ymd);
+    const uniqDays = [...new Set(scopeDays)].sort((a, b) => a - b);
+    const uniqDates = [...new Set(scopeDates)];
+
+    const scopeLabel = uniqDays.length ? uniqDays.map(w => WEEKDAY_LONG[w] + 's').join(' & ')
+                     : uniqDates.length ? uniqDates.map(fmtShort).join(', ')
+                     : 'any date';
+    const condition = span.condition.replace(/\s+/g, ' ').trim();
+    const short = condition.length > 46 ? condition.slice(0, 45).trimEnd() + '…' : condition;
+
+    push(`unlock-${span.start}`, `Could do ${scopeLabel} — if ${short}`,
+      'Records it as an offer to unlock, not a limit',
+      { unlocks: [{
+          id: 'u-' + span.start,
+          text: span.text.trim(),
+          condition,
+          weekdays: uniqDays,
+          dates: uniqDates,
+        }] });
   }
 
   return { suggestions, status };

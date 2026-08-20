@@ -6,30 +6,38 @@ of "yes, but…", and now you have to hold all of it in your head at once.
 
 This holds it for you.
 
-**No accounts, no server, no signup links.** You keep texting people the way you
-already do; you type what they said into the app. Everything lives in your
-browser's local storage. Export to JSON if you want it on another device.
+**No accounts, no logins.** You text one link. Everyone opens it on their own
+phone, says what they're up for, and puts in when they can go — in pickers, in
+plain English, or both. See [SETUP.md](SETUP.md) to switch on shared mode;
+without it the app still runs, but in one browser only.
 
 ## How it works
 
 It models planning as a staged constraint search rather than a poll:
 
-1. **Interest gate** — mark each person yes / maybe / no / unanswered. Only yes
-   and maybe constrain the search; a "no" stops costing you dates.
-2. **Constraint capture** — per person: which weekdays work, specific dates
-   they're out, a short list of dates that *do* work, and how much advance
-   notice they need. Paste what they actually texted and hit
-   **Read it & suggest**; the parser proposes constraints as chips you tap to
-   accept. It never applies anything on its own.
-3. **Hypothesis testing** — before you send another text, check whether a
-   pattern is even worth asking about ("are Saturdays viable at all?"). Every
-   test is logged, so you don't burn the same question twice.
-4. **Inclusivity scoring** — every date in the window is scored by who can make
-   it, with a *maybe* weighted less than a *yes*. Tap any date to see who's out
-   and why.
+1. **Interest, per idea** — a plan can hold several competing activities.
+   Everyone marks themselves in / maybe / out on each one. Only in and maybe
+   constrain the search; an "out" stops costing you dates.
+2. **Availability, once** — which weekdays work, dates you're out, a short list
+   of dates that *do* work, how much notice you need. You give this a single
+   time and it applies to every idea.
+3. **Plain English** — type it the way you'd text it and hit **Read it &
+   suggest**. The parser proposes constraints as chips you tap to accept, and
+   never applies anything on its own.
+4. **Inclusivity scoring** — every date is scored by who can make it, with a
+   *maybe* weighted less than a *yes*. Tap any date to see who's out and why.
 
 ## The parts that do the thinking
 
+- **Which idea travels furthest** — the same people and the same calendar,
+  scored against each activity. Answers "we couldn't all make the kayak, but
+  all five can do the hike" — a fact about appetite, not about dates. Anyone in
+  the plan can float an alternative, and it gets scored against the rest.
+- **What would unlock more** — the opposite of a blackout. "I could do a Monday
+  if someone can carpool" isn't a constraint, it's an *offer*: it names a job
+  that, if somebody does it, turns a 3-of-4 date into a 4-of-4. Shmaybe
+  collects those and hands you the list, and the parser can tell one from the
+  other inside a single sentence.
 - **Which weekday to chase** — rolls every date up by weekday, so you can see
   that Saturdays top out at 4 of 5 before you ask anyone about a specific
   Saturday.
@@ -52,6 +60,11 @@ It models planning as a staged constraint search rather than a poll:
 | `yeah I'm in, but no Tuesdays or Thursdays` | yes · no Tuesday & Thursday |
 | `sure — I'm away Sept 12` | yes · block Sat Sep 12 |
 | `maybe? Sept 19 or Sept 26 could work` | maybe · only those two dates |
+| `only Saturdays, but I could do a Monday if we start after 5` | Saturday only **and** an offer: Mondays, if we start after 5 |
+
+The last row is the interesting one. A conditional clause reverses the meaning
+of everything inside it — treating that "Monday" as a restriction would be
+exactly backwards — so clauses are classified before their weekdays are read.
 
 Ambiguous date mentions offer both readings ("only that date" / "block that
 date") rather than guessing.
@@ -74,5 +87,8 @@ Deploys to GitHub Pages as-is (`.nojekyll` is already here). Live at
 | `js/dates.js` | Local-time `YYYY-MM-DD` helpers — no UTC, so no off-by-one days |
 | `js/solver.js` | Scoring, weekday rollup, blocker analysis, split-trip search. Pure functions, no DOM |
 | `js/parse.js` | Free text → suggested constraints |
-| `js/store.js` | localStorage, import/export |
+| `js/api.js` | Picks a driver; also remembers who you are, per plan |
+| `js/drivers/supabase.js` | The shared backend. Every call is an RPC |
+| `js/drivers/local.js` | The same API over localStorage, for demos and tests |
 | `js/app.js` | Rendering and events |
+| `supabase-schema.sql` | Tables, and the functions that are the whole API |

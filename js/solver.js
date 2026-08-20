@@ -27,6 +27,24 @@ export const REASON_LABEL = {
 };
 
 /**
+ * An "unlock" is the opposite of a blackout: a conditional offer, like "I could
+ * do a Monday if we go after 5" or "I can make any Saturday work if someone can
+ * carpool". It doesn't make a date available — it makes it available *if*
+ * somebody solves the condition, which is a thing the organizer can act on.
+ * @returns the matching unlock, or null
+ */
+export function unlockCovering(p, ymd) {
+  for (const u of p.unlocks || []) {
+    const byDate = (u.dates || []).includes(ymd);
+    const byWeekday = (u.weekdays || []).includes(weekdayOf(ymd));
+    // An unlock with neither scope is a blanket offer over the whole window.
+    const blanket = !(u.dates || []).length && !(u.weekdays || []).length;
+    if (byDate || byWeekday || blanket) return u;
+  }
+  return null;
+}
+
+/**
  * Can one person make one date?
  * Returns { ok, reason } where reason is a key of REASON_LABEL when ok === false.
  */
@@ -61,6 +79,7 @@ export function scoreDate(trip, ymd, asOf = todayYMD()) {
   const inIds = [], out = [];
   let score = 0, yesIn = 0, maybeIn = 0;
 
+  const unlockable = [];
   for (const p of active) {
     const a = availability(p, ymd, asOf);
     if (a.ok) {
@@ -69,6 +88,8 @@ export function scoreDate(trip, ymd, asOf = todayYMD()) {
       if (p.status === 'yes') yesIn++; else maybeIn++;
     } else {
       out.push({ id: p.id, reason: a.reason });
+      const u = unlockCovering(p, ymd);
+      if (u) unlockable.push({ id: p.id, condition: u.condition || u.text, unlockId: u.id });
     }
   }
 
@@ -84,6 +105,9 @@ export function scoreDate(trip, ymd, asOf = todayYMD()) {
     maybeIn,
     everyone: out.length === 0 && active.length > 0,
     coverage: maxScore > 0 ? score / maxScore : 0,
+    unlockable,
+    // Every single person who can't make it has an offer on the table.
+    everyoneIfUnlocked: out.length > 0 && unlockable.length === out.length,
   };
 }
 
@@ -245,4 +269,85 @@ export function verdict(trip, asOf = todayYMD()) {
     tone: 'partial',
     text: `No date works for everyone. Best is ${top.in.length} of ${active.length}.`,
   };
+}
+
+/* =========================================================================
+ * Multi-activity
+ *
+ * Availability is given once per person; interest is given per activity. So
+ * every activity is scored against the same calendar constraints but a
+ * different roster of who actually wants to do it. That's what makes the
+ * comparison meaningful: "we couldn't all make the kayak, but all five can
+ * do the hike" is a fact about interest, not about dates.
+ * ========================================================================= */
+
+/** Project a plan into the single-activity shape the scorers above expect. */
+export function activityView(plan, activityId) {
+  return {
+    window: plan.window,
+    hypotheses: [],
+    participants: plan.participants.map(p => ({
+      ...p,
+      status: p.interests?.[activityId]?.level || 'pending',
+    })),
+  };
+}
+
+/** Rank the activities by how well each one can actually be scheduled. */
+export function compareActivities(plan, asOf = todayYMD()) {
+  return (plan.activities || []).map(activity => {
+    const view = activityView(plan, activity.id);
+    const active = activeParticipants(view);
+    const ranked = rankDates(view, asOf);
+    const full = ranked.filter(s => s.everyone);
+    const best = ranked[0] || null;
+    const interested = view.participants.filter(p => p.status === 'yes').length;
+    return {
+      activity,
+      view,
+      activeCount: active.length,
+      yesCount: interested,
+      maybeCount: active.length - interested,
+      noCount: view.participants.filter(p => p.status === 'no').length,
+      pendingCount: view.participants.filter(p => p.status === 'pending').length,
+      best,
+      bestIn: best ? best.in.length : 0,
+      fullCoverageDates: full.map(s => s.date),
+      // The headline number: most people you can actually get in one place.
+      reach: best ? best.in.length : 0,
+      unlockableDates: ranked.filter(s => !s.everyone && s.everyoneIfUnlocked).map(s => s.date),
+    };
+  }).sort((a, b) =>
+    b.reach - a.reach ||
+    b.fullCoverageDates.length - a.fullCoverageDates.length ||
+    b.yesCount - a.yesCount ||
+    (a.activity.title < b.activity.title ? -1 : 1)
+  );
+}
+
+/**
+ * The actionable form of the unlocks: which conditions, if somebody solved
+ * them, would turn a nearly-there date into one that works for everyone.
+ * Grouped by the exact set of conditions so the organizer sees one job, not
+ * one job per date.
+ */
+export function unlockOpportunities(view, asOf = todayYMD()) {
+  const byKey = new Map();
+  for (const s of rankDates(view, asOf)) {
+    if (s.everyone || !s.everyoneIfUnlocked) continue;
+    const conditions = s.unlockable
+      .map(u => ({ id: u.id, condition: u.condition }))
+      .sort((a, b) => (a.id < b.id ? -1 : 1));
+    const key = conditions.map(c => `${c.id}:${c.condition}`).join('|');
+    if (!byKey.has(key)) byKey.set(key, { conditions, dates: [], gain: s.out.length });
+    byKey.get(key).dates.push(s.date);
+  }
+  return [...byKey.values()].sort((a, b) => b.dates.length - a.dates.length || a.gain - b.gain);
+}
+
+/** Everyone who hasn't said anything about anything yet. */
+export function silentParticipants(plan) {
+  const ids = (plan.activities || []).map(a => a.id);
+  return plan.participants.filter(p =>
+    !ids.some(id => p.interests?.[id] && p.interests[id].level !== 'pending'));
 }

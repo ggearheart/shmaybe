@@ -8,90 +8,100 @@
 <meta name="theme-color" content="#0f766e">
 <link rel="stylesheet" href="styles.css">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛶</text></svg>">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="config.js"></script>
 </head>
 <body>
 
 <header class="topbar">
   <div class="topbar-row">
-    <h1 class="wordmark">Shmaybe<span>?</span></h1>
+    <a class="wordmark" href="./" title="Shmaybe">Shmaybe<span>?</span></a>
     <div class="topbar-actions">
-      <select id="trip-picker" aria-label="Choose trip"></select>
-      <button id="menu-btn" class="icon-btn" aria-label="Trip options" title="Trip options">⋯</button>
+      <span id="mode-pill" class="pill" hidden></span>
+      <button id="share-btn" class="icon-btn" aria-label="Share this plan" title="Share" hidden>⇪</button>
     </div>
   </div>
-  <div id="verdict" class="verdict" role="status" aria-live="polite"></div>
+  <div id="verdict" class="verdict" role="status" aria-live="polite" hidden></div>
 </header>
 
-<nav class="tabs" role="tablist">
-  <button class="tab is-active" data-tab="people" role="tab">People</button>
-  <button class="tab" data-tab="when" role="tab">When</button>
-  <button class="tab" data-tab="ask" role="tab">Ask</button>
-</nav>
-
 <main>
-  <section id="panel-people" class="panel is-active">
-    <div class="card trip-setup">
+  <!-- ------------------------------------------------------------ landing -->
+  <section id="view-landing" class="view">
+    <div class="card hero">
+      <h2>Maybe, shmaybe.</h2>
+      <p class="lede">Everyone replies “yes, but…”. Shmaybe collects the buts and
+        works out the date that leaves the fewest people behind.</p>
+    </div>
+
+    <form id="create-plan" class="card">
+      <h3>Start a plan</h3>
       <label class="field">
-        <span>What are you planning?</span>
-        <input id="trip-title" type="text" placeholder="Kayak to see the bats">
+        <span>Your name</span>
+        <input id="c-name" type="text" placeholder="Greg" autocomplete="given-name" required>
+      </label>
+      <label class="field">
+        <span>What's the plan called?</span>
+        <input id="c-title" type="text" placeholder="September outing" required>
+      </label>
+      <label class="field">
+        <span>First thing you'd like to do</span>
+        <input id="c-activity" type="text" placeholder="Kayak to see the bats">
+        <p class="hint">Anyone who joins can propose alternatives later.</p>
       </label>
       <div class="field-row">
-        <label class="field">
-          <span>No earlier than</span>
-          <input id="win-start" type="date">
-        </label>
-        <label class="field">
-          <span>No later than</span>
-          <input id="win-end" type="date">
-        </label>
+        <label class="field"><span>No earlier than</span><input id="c-start" type="date" required></label>
+        <label class="field"><span>No later than</span><input id="c-end" type="date" required></label>
       </div>
-      <p class="hint" id="window-hint"></p>
-    </div>
-
-    <div id="people-list"></div>
-
-    <form id="add-person" class="add-person">
-      <input id="new-name" type="text" placeholder="Add someone — first name is fine" autocomplete="off">
-      <button type="submit" class="btn btn-primary">Add</button>
+      <button type="submit" class="btn btn-primary btn-block">Create the plan &amp; get a link</button>
+      <p id="create-error" class="error" hidden></p>
     </form>
-  </section>
 
-  <section id="panel-when" class="panel">
-    <div class="card probe">
-      <h2>Test a hypothesis</h2>
-      <p class="hint">Before you text anyone, check whether a pattern is even worth asking about. Logged so you don't ask twice.</p>
-      <div id="probe-days" class="daypicker" role="group" aria-label="Weekdays to test"></div>
-      <div class="probe-actions">
-        <button id="probe-run" class="btn btn-primary">Evaluate &amp; log</button>
-        <button id="probe-clear" class="btn btn-ghost">Clear</button>
-      </div>
-      <div id="probe-result"></div>
+    <div id="known-plans"></div>
+
+    <div class="card">
+      <h3>Have a link?</h3>
+      <form id="open-plan" class="inline-add">
+        <input id="o-slug" type="text" placeholder="paste a shmaybe link or code" autocomplete="off">
+        <button type="submit" class="btn">Open</button>
+      </form>
     </div>
-
-    <div id="hypothesis-log"></div>
-    <div id="results"></div>
   </section>
 
-  <section id="panel-ask" class="panel">
-    <div id="drafts"></div>
+  <!-- --------------------------------------------------------------- plan -->
+  <section id="view-plan" class="view" hidden>
+    <div id="plan-head"></div>
+
+    <!-- shown until this browser has claimed a spot -->
+    <div id="join-gate" hidden></div>
+
+    <nav class="tabs" role="tablist" id="plan-tabs" hidden>
+      <button class="tab is-active" data-tab="you" role="tab">You</button>
+      <button class="tab" data-tab="group" role="tab">Group</button>
+      <button class="tab" data-tab="when" role="tab">When</button>
+      <button class="tab" data-tab="ask" role="tab">Ask</button>
+    </nav>
+
+    <section id="panel-you" class="panel is-active"></section>
+    <section id="panel-group" class="panel"></section>
+    <section id="panel-when" class="panel"></section>
+    <section id="panel-ask" class="panel"></section>
   </section>
+
+  <div id="loading" class="empty" hidden>Loading…</div>
 </main>
 
-<dialog id="menu-dialog">
-  <h2>Trips &amp; data</h2>
-  <div class="menu-actions">
-    <button id="act-new" class="btn">New trip</button>
-    <button id="act-rename" class="btn">Rename this trip</button>
-    <button id="act-export" class="btn">Export all trips (.json)</button>
-    <button id="act-import" class="btn">Import a .json file</button>
-    <button id="act-demo" class="btn">Load the bat-kayak example</button>
-    <button id="act-delete" class="btn btn-danger">Delete this trip</button>
+<dialog id="share-dialog">
+  <h2>Share this plan</h2>
+  <p class="hint">Anyone with this link can join, set their own availability, and
+    propose an alternative. There's nothing to install and no login.</p>
+  <input id="share-url" type="text" readonly>
+  <div class="draft-actions">
+    <button id="share-copy" class="btn btn-primary">Copy link</button>
+    <button id="share-sms" class="btn">Copy invite text</button>
+    <span class="copied" id="share-copied" hidden>Copied</span>
   </div>
-  <p class="hint">Everything is stored in this browser only. Export if you want it on another device.</p>
-  <form method="dialog"><button class="btn btn-primary">Done</button></form>
+  <form method="dialog"><button class="btn">Done</button></form>
 </dialog>
-
-<input id="import-file" type="file" accept="application/json,.json" hidden>
 
 <script type="module" src="js/app.js"></script>
 </body>
