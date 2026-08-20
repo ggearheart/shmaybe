@@ -35,6 +35,25 @@ bypasses every protection below.
 Reload the page. The pill in the header should flip from *this browser only*
 to *shared*.
 
+## Already have a database from an earlier version?
+
+Run [`supabase-migration-2.sql`](supabase-migration-2.sql) — it adds
+`fill_in_for()`, which the thread reader needs, and is safe to re-run. If you
+skip it, the app will tell you which function is missing rather than failing
+mysteriously.
+
+## Speaking for other people
+
+Pasting a group thread means writing constraints for people who never opened
+the link, which the per-person claim token would otherwise forbid. The rule:
+
+> You may speak for someone who has not spoken for themselves — and only until
+> they do.
+
+`fill_in_for()` creates or updates a participant **only while their row is
+unclaimed**. The moment someone joins, `fill_in_for` refuses and the UI shows
+their card as read-only, pointing you at the nudge drafts instead.
+
 ## How it's secured without a login
 
 There are no accounts, which means the usual row-level-security-by-user-id

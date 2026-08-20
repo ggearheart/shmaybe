@@ -230,37 +230,84 @@ begin
 end;
 $$;
 
-create or replace function public.update_participant(
-  p_slug text, p_token uuid, p_patch jsonb)
+-- Shared patch application, so update_participant and fill_in_for cannot drift
+-- apart.
+create or replace function public.shmaybe_apply_patch(p_part uuid, p_patch jsonb)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  update public.participants set
+    name = coalesce(nullif(trim(p_patch->>'name'), ''), name),
+    weekdays = case when p_patch ? 'weekdays'
+      then coalesce((select array_agg(x::int) from jsonb_array_elements_text(p_patch->'weekdays') x), '{}'::int[])
+      else weekdays end,
+    blackouts = case when p_patch ? 'blackouts'
+      then coalesce((select array_agg(x::date) from jsonb_array_elements_text(p_patch->'blackouts') x), '{}'::date[])
+      else blackouts end,
+    blackout_ranges = coalesce(p_patch->'blackoutRanges', blackout_ranges),
+    only_dates = case when p_patch ? 'onlyDates'
+      then coalesce((select array_agg(x::date) from jsonb_array_elements_text(p_patch->'onlyDates') x), '{}'::date[])
+      else only_dates end,
+    notice_days = coalesce((p_patch->>'noticeDays')::int, notice_days),
+    note = coalesce(p_patch->>'note', note),
+    unlocks = coalesce(p_patch->'unlocks', unlocks),
+    updated_at = now()
+  where id = p_part;
+end;
+$$;
+
+create or replace function public.update_participant(p_slug text, p_token uuid, p_patch jsonb)
 returns jsonb language plpgsql volatile security definer set search_path = public as $$
 declare v_part uuid := public.shmaybe_auth(p_slug, p_token);
 begin
   if v_part is null then raise exception 'Not your row to edit'; end if;
+  perform public.shmaybe_apply_patch(v_part, p_patch);
+  return jsonb_build_object('ok', true);
+end;
+$$;
 
-  update public.participants set
-    name            = coalesce(nullif(trim(p_patch->>'name'), ''), name),
-    weekdays        = coalesce((select array_agg(x::int)
-                                from jsonb_array_elements_text(p_patch->'weekdays') x), weekdays),
-    blackouts       = coalesce((select array_agg(x::date)
-                                from jsonb_array_elements_text(p_patch->'blackouts') x),
-                               case when p_patch ? 'blackouts' then '{}'::date[] else blackouts end),
-    blackout_ranges = coalesce(p_patch->'blackoutRanges', blackout_ranges),
-    only_dates      = coalesce((select array_agg(x::date)
-                                from jsonb_array_elements_text(p_patch->'onlyDates') x),
-                               case when p_patch ? 'onlyDates' then '{}'::date[] else only_dates end),
-    notice_days     = coalesce((p_patch->>'noticeDays')::int, notice_days),
-    note            = coalesce(p_patch->>'note', note),
-    unlocks         = coalesce(p_patch->'unlocks', unlocks),
-    updated_at      = now()
-  where id = v_part;
+-- Write constraints for somebody who has not joined — this is what makes
+-- pasting a group text thread possible. Creates the row if the name is new;
+-- refuses outright once they have claimed it. You may speak for someone who
+-- has not spoken for themselves, and only until they do.
+create or replace function public.fill_in_for(
+  p_slug text, p_token uuid, p_name text,
+  p_patch jsonb default '{}'::jsonb, p_interests jsonb default '{}'::jsonb)
+returns jsonb language plpgsql volatile security definer set search_path = public as $$
+declare
+  v_caller  uuid := public.shmaybe_auth(p_slug, p_token);
+  v_plan    uuid := public.shmaybe_plan_id(p_slug);
+  v_part    uuid;
+  v_claimed uuid;
+  k text; v text;
+begin
+  if v_caller is null then raise exception 'Join the plan before filling in for others'; end if;
+  if coalesce(trim(p_name), '') = '' then raise exception 'A name is required'; end if;
 
-  -- `weekdays` needs the same empty-array handling as the date arrays, but the
-  -- aggregate above returns null for an empty JSON array either way.
-  if p_patch ? 'weekdays' and jsonb_array_length(p_patch->'weekdays') = 0 then
-    update public.participants set weekdays = '{}' where id = v_part;
+  select id, claim_token into v_part, v_claimed
+    from public.participants
+   where plan_id = v_plan and lower(name) = lower(trim(p_name));
+
+  if v_part is null then
+    insert into public.participants (plan_id, name)
+    values (v_plan, trim(p_name)) returning id into v_part;
+  elsif v_claimed is not null then
+    raise exception '% has joined and controls their own answers', trim(p_name)
+      using errcode = 'insufficient_privilege';
   end if;
 
-  return jsonb_build_object('ok', true);
+  perform public.shmaybe_apply_patch(v_part, p_patch);
+
+  for k, v in select key, value from jsonb_each_text(coalesce(p_interests, '{}'::jsonb)) loop
+    if v in ('yes','maybe','no','pending')
+       and exists (select 1 from public.activities a where a.id = k::uuid and a.plan_id = v_plan) then
+      insert into public.interests (participant_id, activity_id, level)
+      values (v_part, k::uuid, v)
+      on conflict (participant_id, activity_id) do update
+        set level = excluded.level, updated_at = now();
+    end if;
+  end loop;
+
+  return jsonb_build_object('participantId', v_part);
 end;
 $$;
 
@@ -381,11 +428,13 @@ revoke execute on function
   public.create_plan(text, date, date, text, text),
   public.join_plan(text, text),
   public.update_participant(text, uuid, jsonb),
+  public.fill_in_for(text, uuid, text, jsonb, jsonb),
   public.set_interest(text, uuid, uuid, text, text),
   public.add_activity(text, uuid, text, text),
   public.archive_activity(text, uuid, uuid),
   public.update_plan(text, uuid, text, date, date),
   public.plan_pulse(text),
+  public.shmaybe_apply_patch(uuid, jsonb),
   public.shmaybe_slug(),
   public.shmaybe_plan_id(text),
   public.shmaybe_auth(text, uuid)
@@ -396,6 +445,7 @@ grant execute on function
   public.create_plan(text, date, date, text, text),
   public.join_plan(text, text),
   public.update_participant(text, uuid, jsonb),
+  public.fill_in_for(text, uuid, text, jsonb, jsonb),
   public.set_interest(text, uuid, uuid, text, text),
   public.add_activity(text, uuid, text, text),
   public.archive_activity(text, uuid, uuid),
@@ -403,6 +453,6 @@ grant execute on function
   public.plan_pulse(text)
 to anon, authenticated;
 
--- shmaybe_slug / shmaybe_plan_id / shmaybe_auth are deliberately absent from
--- the grant above: they are internals the security-definer functions call, not
--- part of the API surface.
+-- shmaybe_slug / shmaybe_plan_id / shmaybe_auth / shmaybe_apply_patch are
+-- deliberately absent from the grant above: they are internals the
+-- security-definer functions call, not part of the API surface.

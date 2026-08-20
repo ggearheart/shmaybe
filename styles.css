@@ -396,3 +396,27 @@ a.wordmark { text-decoration: none; color: var(--ink); }
 }
 .toast.show { transform: translate(-50%, 0); }
 .toast.bad { background: var(--danger); color: #fff; }
+
+/* ---------- thread reader ---------- */
+dialog.wide { max-width: 34rem; }
+dialog select {
+  width: 100%; padding: .4rem .5rem; font: inherit; font-size: .85rem;
+  color: var(--ink); background: var(--surface-2);
+  border: 1px solid var(--line); border-radius: 9px;
+}
+#thread-body h2 { font-size: 1rem; }
+#thread-body textarea {
+  width: 100%; padding: .6rem; font: inherit; font-size: .88rem; color: var(--ink);
+  background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px; resize: vertical;
+}
+.reviewlist { margin-top: .6rem; max-height: 46vh; overflow-y: auto; }
+.reviewrow {
+  display: grid; grid-template-columns: 8.5rem 1fr; gap: .5rem; align-items: start;
+  padding: .45rem 0; border-top: 1px solid var(--line);
+}
+.reviewrow:first-child { border-top: none; }
+.reviewrow p { font-size: .84rem; color: var(--ink-2); margin: .15rem 0 0; }
+@media (max-width: 460px) {
+  .reviewrow { grid-template-columns: 1fr; gap: .25rem; }
+  .reviewrow p { margin-left: .2rem; }
+}

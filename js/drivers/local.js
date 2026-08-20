@@ -106,6 +106,37 @@ export async function updateParticipant(slug, token, patch) {
   return { ok: true };
 }
 
+export async function fillInFor(slug, token, name, patch = {}, interests = {}) {
+  const d = db();
+  auth(d, slug, token);                       // caller must be in the plan
+  const p = plan(d, slug);
+  const clean = String(name || '').trim();
+  if (!clean) throw new Error('A name is required');
+
+  let who = p.participants.find(x => x.name.toLowerCase() === clean.toLowerCase());
+  if (!who) {
+    who = { id: uuid(), name: clean, claimToken: null, weekdays: [], blackouts: [],
+            blackoutRanges: [], onlyDates: [], noticeDays: 0, note: '', unlocks: [],
+            interests: {}, updatedAt: stamp() };
+    p.participants.push(who);
+  } else if (who.claimToken) {
+    throw new Error(`${who.name} has joined and controls their own answers`);
+  }
+
+  for (const [k, v] of Object.entries(patch)) {
+    if (k === 'name') { if (String(v).trim()) who.name = String(v).trim(); }
+    else who[k] = v;
+  }
+  for (const [actId, level] of Object.entries(interests || {})) {
+    if (!['yes', 'maybe', 'no', 'pending'].includes(level)) continue;
+    if (!p.activities.some(a => a.id === actId)) continue;
+    who.interests[actId] = { level, note: who.interests[actId]?.note || '' };
+  }
+  who.updatedAt = stamp();
+  write(d);
+  return { participantId: who.id };
+}
+
 export async function setInterest(slug, token, activityId, level, note) {
   if (!['yes', 'maybe', 'no', 'pending'].includes(level)) throw new Error(`Unknown interest level ${level}`);
   const d = db();

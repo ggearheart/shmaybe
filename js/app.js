@@ -8,6 +8,7 @@ import {
   silentParticipants, REASON_LABEL,
 } from './solver.js';
 import { parseReply } from './parse.js';
+import { splitThread } from './thread.js';
 import * as api from './api.js';
 
 const $ = sel => document.querySelector(sel);
@@ -339,6 +340,16 @@ function renderGroup() {
       <p class="hint">One link, no signup. They pick their name and fill in their own availability.</p>
       <div class="inline-add" style="margin-top:.5rem">
         <button class="btn btn-primary btn-sm" data-act="open-share">Share the link</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Already got answers by text?</h3>
+      <p class="hint">Paste the group thread, or a screenshot of it, and Shmaybe will
+        sort out who said what and pull the constraints out. It reads the image on
+        this device — nothing is uploaded.</p>
+      <div class="inline-add" style="margin-top:.5rem">
+        <button class="btn btn-sm" data-act="open-thread">Read a thread</button>
       </div>
     </div>
 
@@ -975,3 +986,279 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) poll
 })();
 
 if (api.configError) toast('Sharing is off: ' + api.configError, true);
+
+/* =========================================================================
+ * Reading a group text thread
+ *
+ * People answer by text whether or not you send them a link, so the app has
+ * to meet that reality. Paste the thread (or a screenshot of it) and it gets
+ * split by speaker, matched against the roster, and run through the same
+ * constraint parser — with a review step in between, because attribution from
+ * a screenshot is a guess and filing someone's constraints under the wrong
+ * name is worse than filing none.
+ *
+ * Everything happens in this browser. The messages are never uploaded.
+ * ========================================================================= */
+
+
+const IGNORE = '__ignore__';
+
+function openThread() {
+  state.thread = { step: 'input', messages: [], text: '', busy: false,
+                   picks: {}, patches: {}, interests: {}, targetActivity: state.activityId };
+  renderThread();
+  $('#thread-dialog').showModal();
+}
+
+function threadRoster() { return state.plan.participants; }
+
+function renderThread() {
+  const t = state.thread;
+  if (!t) return;
+  const box = $('#thread-body');
+
+  if (t.step === 'input') {
+    box.innerHTML = `
+      <h2>Read a thread</h2>
+      <p class="hint">Paste the conversation, or drop in a screenshot of it. Nothing
+        is uploaded — the reading happens on this device.</p>
+      <div class="field" style="margin-top:.6rem">
+        <textarea id="thread-text" style="min-height:9rem"
+          placeholder="Sara: yes but only Saturdays work here&#10;Dev: maybe — my partner can only do Mon/Wed&#10;Ana: in! just need two weeks notice"></textarea>
+      </div>
+      <div class="inline-add">
+        <button class="btn btn-primary btn-sm" data-act="thread-read">Read it</button>
+        <label class="btn btn-sm" for="thread-image">Use a screenshot</label>
+        <input id="thread-image" type="file" accept="image/*" hidden>
+      </div>
+      <div id="thread-progress" class="hint" style="margin-top:.5rem"></div>`;
+    return;
+  }
+
+  if (t.step === 'review') {
+    const roster = threadRoster();
+    const opts = (sel) => `
+      <option value="${IGNORE}" ${!sel ? 'selected' : ''}>— skip this line —</option>
+      ${roster.map(p => `<option value="${p.id}" ${sel === p.id ? 'selected' : ''}>${esc(p.name)}${p.claimed ? '' : ' (not joined)'}</option>`).join('')}
+      ${[...new Set(t.messages.map(m => m.speaker).filter(Boolean))]
+        .filter(n => !roster.some(p => p.name.toLowerCase() === n.toLowerCase()))
+        .map(n => `<option value="new:${esc(n)}" ${sel === 'new:' + n ? 'selected' : ''}>＋ add ${esc(n)}</option>`).join('')}`;
+
+    box.innerHTML = `
+      <h2>Who said what?</h2>
+      <p class="hint">${t.messages.length} message${t.messages.length === 1 ? '' : 's'} found.
+        Fix anything it got wrong — nothing is applied yet.</p>
+      <div class="reviewlist">
+        ${t.messages.map((m, i) => `
+          <div class="reviewrow">
+            <select data-act="thread-pick" data-idx="${i}">${opts(t.picks[i])}</select>
+            <p>${esc(m.text)}</p>
+          </div>`).join('')}
+      </div>
+      <div class="inline-add" style="margin-top:.7rem">
+        <button class="btn btn-primary btn-sm" data-act="thread-extract">Pull out the constraints</button>
+        <button class="btn btn-sm btn-ghost" data-act="thread-back">Back</button>
+      </div>`;
+    return;
+  }
+
+  if (t.step === 'apply') {
+    const roster = threadRoster();
+    const nameOfPick = pick => pick.startsWith('new:') ? pick.slice(4)
+      : (roster.find(p => p.id === pick)?.name || '');
+
+    const people = Object.entries(t.people).map(([pick, info]) => {
+      const name = nameOfPick(pick);
+      const existing = roster.find(p => p.name.toLowerCase() === name.toLowerCase());
+      const locked = existing && existing.claimed && existing.id !== state.me.participantId;
+      const chips = info.suggestions;
+      const applied = t.patches[pick] || {};
+      const appliedCount = Object.keys(applied).length + (t.interests[pick] ? 1 : 0);
+
+      return `
+        <div class="card">
+          <div class="person-head">
+            <b style="flex:1">${esc(name)}</b>
+            ${locked ? '<span class="pill">has joined</span>'
+                     : appliedCount ? `<span class="pill good">${appliedCount} to save</span>` : ''}
+          </div>
+          <p class="quote">“${esc(info.text)}”</p>
+          ${locked ? `<p class="hint">${esc(name)} is answering for themselves, so this
+              won't overwrite them. Nudge them on the Ask tab instead.</p>`
+            : chips.length || info.status ? `
+            <div class="sugg-list" style="margin-top:.5rem">
+              ${info.status ? `<button class="sugg" data-act="thread-status" data-pick="${esc(pick)}"
+                  data-status="${info.status}">Mark ${esc(info.status)}<small>for ${esc(activityTitle(t.targetActivity))}</small></button>` : ''}
+              ${chips.map((c, i) => `<button class="sugg" data-act="thread-apply"
+                  data-pick="${esc(pick)}" data-idx="${i}">${esc(c.label)}<small>${esc(c.detail)}</small></button>`).join('')}
+            </div>` : '<p class="hint">Nothing recognisable in that.</p>'}
+        </div>`;
+    }).join('');
+
+    box.innerHTML = `
+      <h2>What it found</h2>
+      <p class="hint">Tap what's right. Same rule as everywhere else — nothing is
+        applied until you say so.</p>
+      ${state.plan.activities.length > 1 ? `
+        <div class="field" style="margin-top:.5rem">
+          <span>Read "yes / maybe / no" as interest in</span>
+          <select data-act="thread-target">
+            ${state.plan.activities.map(a => `<option value="${a.id}"
+              ${a.id === t.targetActivity ? 'selected' : ''}>${esc(a.title)}</option>`).join('')}
+          </select>
+        </div>` : ''}
+      ${people || '<div class="card empty">Nobody was attributed.</div>'}
+      <div class="inline-add" style="margin-top:.7rem">
+        <button class="btn btn-primary" data-act="thread-save" ${t.busy ? 'disabled' : ''}>
+          ${t.busy ? 'Saving…' : 'Save to the plan'}</button>
+        <button class="btn btn-sm btn-ghost" data-act="thread-back-review">Back</button>
+      </div>`;
+  }
+}
+
+function activityTitle(id) {
+  return state.plan.activities.find(a => a.id === id)?.title || 'this plan';
+}
+
+/** Review step: seed each message's speaker from what the splitter guessed. */
+function toReview(raw) {
+  const t = state.thread;
+  const roster = threadRoster();
+  const res = splitThread(raw, roster);
+  if (!res.messages.length) { toast('No messages found in that.', true); return; }
+
+  t.text = raw;
+  t.messages = res.messages;
+  t.picks = {};
+  res.messages.forEach((m, i) => {
+    if (m.participantId) t.picks[i] = m.participantId;
+    else if (m.speaker) t.picks[i] = 'new:' + m.speaker;
+  });
+  t.step = 'review';
+  renderThread();
+}
+
+/** Review → per-person constraint suggestions. */
+function toApply() {
+  const t = state.thread;
+  const byPick = {};
+  t.messages.forEach((m, i) => {
+    const pick = t.picks[i];
+    if (!pick || pick === IGNORE) return;
+    (byPick[pick] = byPick[pick] || []).push(m.text);
+  });
+
+  t.people = {};
+  for (const [pick, texts] of Object.entries(byPick)) {
+    const text = texts.join('. ').replace(/\.\s*\./g, '.');
+    const parsed = parseReply(text, state.plan.window);
+    t.people[pick] = { text, suggestions: parsed.suggestions, status: parsed.status };
+  }
+  t.patches = {};
+  t.interests = {};
+  t.step = 'apply';
+  renderThread();
+}
+
+async function saveThread() {
+  const t = state.thread;
+  const roster = threadRoster();
+  t.busy = true; renderThread();
+
+  const nameOfPick = pick => pick.startsWith('new:') ? pick.slice(4)
+    : (roster.find(p => p.id === pick)?.name || '');
+
+  let saved = 0, skipped = [];
+  const picks = new Set([...Object.keys(t.patches), ...Object.keys(t.interests)]);
+
+  for (const pick of picks) {
+    const name = nameOfPick(pick);
+    if (!name) continue;
+    const interests = t.interests[pick] ? { [t.targetActivity]: t.interests[pick] } : {};
+    try {
+      await api.fillInFor(state.slug, state.me.token, name, t.patches[pick] || {}, interests);
+      saved++;
+    } catch (e) {
+      skipped.push(`${name} (${e.message})`);
+    }
+  }
+
+  t.busy = false;
+  $('#thread-dialog').close();
+  state.thread = null;
+  await refresh();
+  if (saved) toast(`Saved ${saved} ${saved === 1 ? 'person' : 'people'} from the thread.`);
+  if (skipped.length) toast('Skipped: ' + skipped.join('; '), true);
+}
+
+/* --- thread events -------------------------------------------------------- */
+
+document.addEventListener('click', async e => {
+  const btn = e.target.closest('button, label');
+  if (!btn) return;
+  const t = state.thread;
+
+  switch (btn.dataset.act) {
+    case 'open-thread': openThread(); break;
+    case 'thread-read': toReview($('#thread-text').value); break;
+    case 'thread-back': t.step = 'input'; renderThread(); break;
+    case 'thread-back-review': t.step = 'review'; renderThread(); break;
+    case 'thread-extract': toApply(); break;
+
+    case 'thread-apply': {
+      const pick = btn.dataset.pick;
+      const info = t.people[pick];
+      const s = info.suggestions.splice(Number(btn.dataset.idx), 1)[0];
+      const base = t.patches[pick] || {};
+      const merged = { ...base };
+      for (const [k, v] of Object.entries(s.patch)) {
+        if (k === 'blackouts' || k === 'onlyDates') merged[k] = [...new Set([...(base[k] || []), ...v])].sort();
+        else if (k === 'blackoutRanges' || k === 'unlocks') merged[k] = [...(base[k] || []), ...v];
+        else merged[k] = v;
+      }
+      t.patches[pick] = merged;
+      renderThread();
+      break;
+    }
+    case 'thread-status': {
+      t.interests[btn.dataset.pick] = btn.dataset.status;
+      t.people[btn.dataset.pick].status = null;
+      renderThread();
+      break;
+    }
+    case 'thread-save': await saveThread(); break;
+  }
+});
+
+document.addEventListener('change', async e => {
+  const t = state.thread;
+  if (!t) return;
+  if (e.target.dataset.act === 'thread-pick') {
+    t.picks[Number(e.target.dataset.idx)] = e.target.value;
+  }
+  if (e.target.dataset.act === 'thread-target') {
+    t.targetActivity = e.target.value;
+  }
+  if (e.target.id === 'thread-image') {
+    const file = e.target.files[0];
+    if (!file) return;
+    const prog = $('#thread-progress');
+    prog.textContent = 'Loading the OCR engine (a few MB, first time only)…';
+    try {
+      const { imageToLines, linesToTranscript } = await import('./ocr.js');
+      const { lines } = await imageToLines(file, (pct, label) => {
+        prog.textContent = `${label}… ${pct}%`;
+      });
+      if (!lines.length) { prog.textContent = 'No text found in that image.'; return; }
+      const meName = meRow()?.name || 'Me';
+      const transcript = linesToTranscript(lines, threadRoster(), meName);
+      prog.textContent = '';
+      toReview(transcript);
+    } catch (err) {
+      prog.textContent = '';
+      toast(err.message || 'Could not read that image', true);
+    } finally {
+      e.target.value = '';
+    }
+  }
+});

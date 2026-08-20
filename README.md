@@ -38,6 +38,13 @@ It models planning as a staged constraint search rather than a poll:
   that, if somebody does it, turns a 3-of-4 date into a 4-of-4. Shmaybe
   collects those and hands you the list, and the parser can tell one from the
   other inside a single sentence.
+- **Read a thread** — people answer by text whether or not you send them a
+  link, so paste the group conversation in (or a screenshot of it) and Shmaybe
+  splits it by speaker, matches names against the roster, and pulls each
+  person's constraints out. OCR runs in the browser, and bubble alignment gives
+  speaker attribution for free — your messages sit right, everyone else's sit
+  left. Nothing is uploaded, and every line goes through a review step before a
+  single constraint is applied.
 - **Which weekday to chase** — rolls every date up by weekday, so you can see
   that Saturdays top out at 4 of 5 before you ask anyone about a specific
   Saturday.
@@ -62,9 +69,13 @@ It models planning as a staged constraint search rather than a poll:
 | `maybe? Sept 19 or Sept 26 could work` | maybe · only those two dates |
 | `only Saturdays, but I could do a Monday if we start after 5` | Saturday only **and** an offer: Mondays, if we start after 5 |
 
-The last row is the interesting one. A conditional clause reverses the meaning
-of everything inside it — treating that "Monday" as a restriction would be
-exactly backwards — so clauses are classified before their weekdays are read.
+| `yes! but only if it's not the week of the 14th` | blackout for that week — **not** an offer |
+
+The last two rows are the interesting ones. A conditional clause reverses the
+meaning of everything inside it — treating that "Monday" as a restriction would
+be exactly backwards — so clauses are classified before their weekdays are
+read. But `only if` and `if not…` are restrictions wearing a conditional's
+clothes, and reading those as offers would invent a yes nobody gave.
 
 Ambiguous date mentions offer both readings ("only that date" / "block that
 date") rather than guessing.
@@ -87,6 +98,8 @@ Deploys to GitHub Pages as-is (`.nojekyll` is already here). Live at
 | `js/dates.js` | Local-time `YYYY-MM-DD` helpers — no UTC, so no off-by-one days |
 | `js/solver.js` | Scoring, weekday rollup, blocker analysis, split-trip search. Pure functions, no DOM |
 | `js/parse.js` | Free text → suggested constraints |
+| `js/thread.js` | Splits a pasted conversation by speaker; matches names to the roster |
+| `js/ocr.js` | Screenshot → positioned text → transcript. Loads Tesseract lazily |
 | `js/api.js` | Picks a driver; also remembers who you are, per plan |
 | `js/drivers/supabase.js` | The shared backend. Every call is an RPC |
 | `js/drivers/local.js` | The same API over localStorage, for demos and tests |

@@ -19,6 +19,13 @@ export function init(url, anonKey) {
 async function rpc(fn, args) {
   const { data, error } = await sb.rpc(fn, args);
   if (error) {
+    // PGRST202 means the function isn't in this project — i.e. the deployed
+    // app is ahead of the database. Say that, rather than "404".
+    if (error.code === 'PGRST202') {
+      const e = new Error(`This Supabase project doesn't have ${fn}() yet — run the latest supabase-schema.sql (or supabase-migration-2.sql) in the SQL editor.`);
+      e.needsMigration = true;
+      throw e;
+    }
     // Postgres raises come back with the message we wrote in the schema;
     // surface that rather than a generic "400".
     const e = new Error(error.message || `${fn} failed`);
@@ -38,6 +45,9 @@ export const joinPlan = (slug, name) => rpc('join_plan', { p_slug: slug, p_name:
 
 export const updateParticipant = (slug, token, patch) =>
   rpc('update_participant', { p_slug: slug, p_token: token, p_patch: patch });
+
+export const fillInFor = (slug, token, name, patch = {}, interests = {}) =>
+  rpc('fill_in_for', { p_slug: slug, p_token: token, p_name: name, p_patch: patch, p_interests: interests });
 
 export const setInterest = (slug, token, activityId, level, note) =>
   rpc('set_interest', { p_slug: slug, p_token: token, p_activity: activityId, p_level: level, p_note: note ?? null });

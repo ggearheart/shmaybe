@@ -50,13 +50,34 @@ function segmentsOf(text) {
   return out;
 }
 
-function conditionalSpans(text) {
+/**
+ * @param text  lowercased, for matching
+ * @param orig  same string with its original capitalisation, so the condition
+ *              we show the user reads like they wrote it ("carpool from Davis",
+ *              not "carpool from davis"). Both transforms that produce `text`
+ *              preserve length, so the offsets line up.
+ */
+function conditionalSpans(text, orig) {
   return segmentsOf(text)
     .map(seg => {
       const m = COND_TRIGGER.exec(seg.text);
       if (!m) return null;
-      const condition = seg.text.slice(m.index + m[0].length).trim().replace(/^that\s+/, '');
-      return { ...seg, condition: condition || seg.text.trim(), scopeText: seg.text.slice(0, m.index) };
+      const from = seg.start + m.index + m[0].length;
+      const condition = orig.slice(from, seg.end).trim().replace(/^that\s+/i, '');
+      // "only if" and "if not …" are restrictions in conditional clothing, not
+      // offers. Treating them as offers invents a yes nobody gave.
+      const before = seg.text.slice(0, m.index);
+      const restrictive = /\bonly\s*$/.test(before.trimEnd() + ' ')
+        || /\bonly\b[^.]{0,12}$/.test(before)
+        || /^(not|it'?s not|isn'?t|no\b|there'?s no|unless)\b/.test(condition.toLowerCase());
+
+      return {
+        ...seg,
+        restrictive,
+        condition: condition || orig.slice(seg.start, seg.end).trim(),
+        original: orig.slice(seg.start, seg.end).trim(),
+        scopeText: seg.text.slice(0, m.index),
+      };
     })
     .filter(Boolean);
 }
@@ -102,7 +123,8 @@ function detectStatus(text) {
   }
   if (/^\s*(no\b|nope|nah|can'?t|cannot|sorry|pass\b|out\b|count me out)/.test(head)) return 'no';
   if (test(/\b(count me out|i'?m out|can'?t make (it|any)|not going to work|have to pass)\b/)) return 'no';
-  if (/^\s*i['’]?m in\b|^\s*in[!.\s]/.test(head)) return 'yes';
+  // "in, as long as…" / "in!" / "I'm in". \b keeps this off "instead".
+  if (/^\s*i['’]?m in\b|^\s*in\b/.test(head)) return 'yes';
   if (test(/\b(yes|yep|yeah|yup|sure|i'?m in|im in|count me in|down for|definitely|absolutely|love to|sounds great)\b/)) return 'yes';
   return null;
 }
@@ -157,15 +179,20 @@ function findDateMentions(text, win) {
  * Each suggestion carries a `patch` that app.js merges into the participant.
  */
 export function parseReply(raw, win) {
-  const text = String(raw || '').toLowerCase().replace(/’/g, "'");
+  // Both of these preserve length, so indices into `text` are valid in `orig`.
+  const orig = String(raw || '').replace(/’/g, "'");
+  const text = orig.toLowerCase();
   const suggestions = [];
   const push = (key, label, detail, patch) => suggestions.push({ key, label, detail, patch });
 
   const status = detectStatus(text);
 
   // Anything inside a conditional clause is an offer, handled separately below.
-  const condSpans = conditionalSpans(text);
-  const hard = i => !inSpans(condSpans, i);
+  const condSpans = conditionalSpans(text, orig);
+  // Only genuine offers are held back from the hard-constraint pass; a
+  // restrictive conditional still has to produce its blackout.
+  const offerSpans = condSpans.filter(sp => !sp.restrictive);
+  const hard = i => !inSpans(offerSpans, i);
 
   // --- Wide-open flexibility ------------------------------------------------
   const flexAt = text.search(/\b(any day|anytime|any time|whenever|whatever works|flexible|all good|works for me|open)\b/);
@@ -210,6 +237,7 @@ export function parseReply(raw, win) {
   const weekRe = /\bweek of\s+(?:the\s+)?([a-z]{3,9}\.?\s+)?(\d{1,2})(?:st|nd|rd|th)?\b/g;
   let wm;
   while ((wm = weekRe.exec(text))) {
+    if (!hard(wm.index)) continue;   // inside an offer, not a blackout
     const monthWord = (wm[1] || '').trim().replace('.', '');
     const mo = MONTHS[monthWord];
     const day = Number(wm[2]);
@@ -271,7 +299,7 @@ export function parseReply(raw, win) {
   }
 
   // --- Conditional offers ("opportunities to participate") ----------------
-  for (const span of condSpans) {
+  for (const span of offerSpans) {
     const scopeDays = findDayMentions(span.scopeText || span.text).map(h => h.weekday);
     const scopeDates = findDateMentions(span.scopeText || span.text, win).map(d => d.ymd);
     const uniqDays = [...new Set(scopeDays)].sort((a, b) => a - b);
@@ -287,7 +315,7 @@ export function parseReply(raw, win) {
       'Records it as an offer to unlock, not a limit',
       { unlocks: [{
           id: 'u-' + span.start,
-          text: span.text.trim(),
+          text: span.original,
           condition,
           weekdays: uniqDays,
           dates: uniqDates,
