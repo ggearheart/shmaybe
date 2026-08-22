@@ -5,6 +5,28 @@ export const WEEKDAY_LONG = ['Sunday','Monday','Tuesday','Wednesday','Thursday',
 export const WEEKDAY_SHORT = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 export const WEEKDAY_MIN = ['Su','M','Tu','W','Th','F','Sa'];
 const MONTH_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+export const MONTH_LONG = ['January','February','March','April','May','June',
+  'July','August','September','October','November','December'];
+
+/** Group a run of days into calendar months, padded to whole Sun–Sat weeks. */
+export function monthsOf(startYMD, endYMD) {
+  const out = [];
+  let cursor = fromYMD(startYMD);
+  cursor.setDate(1);
+  const last = fromYMD(endYMD);
+  while (cursor <= last) {
+    const y = cursor.getFullYear(), m = cursor.getMonth();
+    const first = new Date(y, m, 1);
+    const days = new Date(y, m + 1, 0).getDate();
+    out.push({
+      year: y, month: m, label: `${MONTH_LONG[m]} ${y}`,
+      lead: first.getDay(),                       // blank cells before the 1st
+      days: Array.from({ length: days }, (_, i) => toYMD(new Date(y, m, i + 1))),
+    });
+    cursor = new Date(y, m + 1, 1);
+  }
+  return out;
+}
 
 export function toYMD(d) {
   const y = d.getFullYear();

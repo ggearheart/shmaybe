@@ -8,6 +8,7 @@ import {
   silentParticipants, REASON_LABEL,
 } from './solver.js';
 import { parseReply } from './parse.js';
+import { renderCalendar, rangeCovering } from './calendar.js';
 import { splitThread } from './thread.js';
 import * as api from './api.js';
 
@@ -26,6 +27,7 @@ const state = {
   editingUnlock: null,
   editingUnlockDays: null,
   editingUnlockText: null,   // held in state: re-rendering the form would drop it
+  calMode: 'block',      // what a calendar tap means: 'block' or 'only'
   optOut: null,          // { activityId } — the counter-offer nudge
   invite: null,          // { name, url } — the last invite link generated
   openDates: new Set(),
@@ -259,39 +261,15 @@ function renderYou() {
       </div>
 
       <div class="field">
-        <span>Dates you can't do</span>
-        <div class="datechips">
-          ${me.blackouts.map(d => `<span class="datechip">${esc(fmtShort(d))}
-            <button data-act="rm-blackout" data-val="${d}" aria-label="Remove">×</button></span>`).join('')}
-          ${(me.blackoutRanges || []).map((r, i) => `<span class="datechip">${esc(fmtRange(r.start, r.end))}
-            <button data-act="rm-range" data-val="${i}" aria-label="Remove">×</button></span>`).join('')}
-        </div>
-        <div class="inline-add">
-          <input type="date" data-act="blackout-input" min="${p.window.start}" max="${p.window.end}">
-          <button class="btn btn-sm" data-act="add-blackout">Block that day</button>
-        </div>
-        <div class="inline-add">
-          <input type="date" data-act="range-from" min="${p.window.start}" max="${p.window.end}">
-          <span class="hint">to</span>
-          <input type="date" data-act="range-to" min="${p.window.start}" max="${p.window.end}">
-          <button class="btn btn-sm" data-act="add-range">Block a stretch</button>
-        </div>
-        <p class="hint">A stretch covers a holiday or a trip away without adding
-          each day one at a time.</p>
+        <span>Which days work</span>
+        ${renderCalendar(me, p, state.calMode)}
+        ${(me.blackoutRanges || []).length ? `
+          <div class="datechips" style="margin-top:.5rem">
+            ${(me.blackoutRanges || []).map((r, i) => `<span class="datechip">${esc(fmtRange(r.start, r.end))}
+              <button data-act="rm-range" data-val="${i}" aria-label="Remove">×</button></span>`).join('')}
+          </div>` : ''}
       </div>
 
-      <div class="field">
-        <span>Only these dates work</span>
-        <div class="datechips">
-          ${me.onlyDates.map(d => `<span class="datechip only">${esc(fmtShort(d))}
-            <button data-act="rm-only" data-val="${d}" aria-label="Remove">×</button></span>`).join('')}
-        </div>
-        <div class="inline-add">
-          <input type="date" data-act="only-input" min="${p.window.start}" max="${p.window.end}">
-          <button class="btn btn-sm" data-act="add-only">Add</button>
-        </div>
-        <p class="hint">Leave empty unless your options really are that narrow.</p>
-      </div>
 
       <div class="field">
         <span>Advance notice you need</span>
@@ -870,6 +848,134 @@ function patchMe(patch, { immediate = false } = {}) {
   if (immediate) flush(); else saveTimer = setTimeout(flush, 700);
 }
 
+/**
+ * Toggle one day. A day covered by a saved range is the awkward case: the range
+ * is a single object, so freeing one day means expanding it into the individual
+ * days it stood for, minus the one tapped. The chip disappears and the rest stay
+ * blocked, which is what someone tapping a day expects.
+ */
+function toggleDay(me, ymd) {
+  if (state.calMode === 'only') {
+    const has = (me.onlyDates || []).includes(ymd);
+    patchMe({
+      onlyDates: has ? me.onlyDates.filter(d => d !== ymd)
+                     : [...new Set([...(me.onlyDates || []), ymd])].sort(),
+    }, { immediate: true });
+    return;
+  }
+  const range = rangeCovering(me, ymd);
+  if (range) {
+    const expanded = eachDay(range.start, range.end).filter(d => d !== ymd);
+    patchMe({
+      blackouts: [...new Set([...(me.blackouts || []), ...expanded])].sort(),
+      blackoutRanges: (me.blackoutRanges || []).filter(r => r !== range),
+    }, { immediate: true });
+    return;
+  }
+  const has = (me.blackouts || []).includes(ymd);
+  patchMe({
+    blackouts: has ? me.blackouts.filter(d => d !== ymd)
+                   : [...new Set([...(me.blackouts || []), ymd])].sort(),
+  }, { immediate: true });
+}
+
+/**
+ * Drag-paint, mouse only. On touch a drag is a scroll, and hijacking it to
+ * select dates makes the page feel broken — a tap there goes through the normal
+ * click handler instead.
+ *
+ * A sweep paints the DOM directly and commits once on release. Re-rendering per
+ * day would tear out the cells mid-drag and the sweep would lose the pointer.
+ */
+let paint = null;
+let suppressClick = false;
+
+/**
+ * Preview the sweep. Painting only the cells that fired pointerover loses days
+ * on a fast drag — the pointer never lands on them. So the span between where
+ * the drag started and where it is now gets painted whole, which also makes
+ * dragging back over yourself undo cleanly.
+ */
+function paintPreview() {
+  const { originDate, current, cells, snapshot, mode } = paint;
+  const lo = originDate <= current ? originDate : current;
+  const hi = originDate <= current ? current : originDate;
+  for (const el of cells) {
+    const d = el.dataset.date;
+    if (d >= lo && d <= hi) {
+      el.className = mode === 'block' ? 'cal-day is-blocked' : 'cal-day';
+      el.setAttribute('aria-pressed', String(mode === 'block'));
+    } else {
+      el.className = snapshot.get(d).cls;
+      el.setAttribute('aria-pressed', snapshot.get(d).pressed);
+    }
+  }
+}
+
+document.addEventListener('pointerdown', e => {
+  if (e.pointerType !== 'mouse' || e.button !== 0) return;
+  const cell = e.target.closest('[data-act="cal-day"]');
+  if (!cell || !meRow()) return;
+  const cells = [...document.querySelectorAll('[data-act="cal-day"]')];
+  paint = {
+    // Whatever the first cell would become, the whole sweep follows.
+    mode: cell.getAttribute('aria-pressed') === 'true' ? 'free' : 'block',   // 'block' also means "add" in only-mode
+    originDate: cell.dataset.date,
+    current: cell.dataset.date,
+    cells,
+    snapshot: new Map(cells.map(el =>
+      [el.dataset.date, { cls: el.className, pressed: el.getAttribute('aria-pressed') }])),
+    dragged: false,
+  };
+});
+
+document.addEventListener('pointerover', e => {
+  if (!paint) return;
+  const cell = e.target.closest('[data-act="cal-day"]');
+  if (!cell || cell.dataset.date === paint.current) return;
+  paint.dragged = true;
+  paint.current = cell.dataset.date;
+  paintPreview();
+});
+
+document.addEventListener('pointerup', () => {
+  const p = paint;
+  paint = null;
+  if (!p || !p.dragged) return;      // a plain click — the click handler has it
+  suppressClick = true;              // ...but a drag must not also fire one
+  setTimeout(() => { suppressClick = false; }, 0);
+
+  const me = meRow();
+  if (!me) return;
+  const lo = p.originDate <= p.current ? p.originDate : p.current;
+  const hi = p.originDate <= p.current ? p.current : p.originDate;
+  const span = eachDay(lo, hi);
+
+  if (state.calMode === 'only') {
+    const list = new Set(me.onlyDates || []);
+    for (const d of span) { if (p.mode === 'block') list.add(d); else list.delete(d); }
+    patchMe({ onlyDates: [...list].sort() }, { immediate: true });
+    return;
+  }
+
+  let ranges = [...(me.blackoutRanges || [])];
+  const blackouts = new Set(me.blackouts || []);
+  // Any saved range the sweep touched becomes individual days, so days inside
+  // it can be freed one at a time.
+  for (const r of [...ranges]) {
+    if (span.some(d => daysBetween(r.start, d) >= 0 && daysBetween(d, r.end) >= 0)) {
+      eachDay(r.start, r.end).forEach(d => blackouts.add(d));
+      ranges = ranges.filter(x => x !== r);
+    }
+  }
+  for (const d of span) {
+    if (p.mode === 'block') blackouts.add(d); else blackouts.delete(d);
+  }
+  patchMe({ blackouts: [...blackouts].sort(), blackoutRanges: ranges }, { immediate: true });
+});
+
+document.addEventListener('pointercancel', () => { paint = null; });
+
 function applyPatch(me, patch) {
   const uniqSorted = a => [...new Set(a)].sort();
   const next = {};
@@ -990,36 +1096,23 @@ document.addEventListener('click', async e => {
       }, 60);
       break;
 
-    case 'add-blackout': {
-      const input = btn.closest('.inline-add').querySelector('[data-act="blackout-input"]');
-      if (input.value) { patchMe(applyPatch(me, { blackouts: [input.value] }), { immediate: true }); }
+    case 'cal-day':
+      if (!suppressClick) toggleDay(me, btn.dataset.date);
       break;
-    }
-    case 'rm-blackout':
-      patchMe({ blackouts: me.blackouts.filter(d => d !== btn.dataset.val) }, { immediate: true }); break;
+
+    case 'clear-blackouts':
+      if (!confirm('Clear every blocked day?')) break;
+      patchMe({ blackouts: [], blackoutRanges: [] }, { immediate: true });
+      break;
     case 'rm-range':
       patchMe({ blackoutRanges: me.blackoutRanges.filter((_, i) => i !== Number(btn.dataset.val)) }, { immediate: true }); break;
-    case 'add-only': {
-      const input = btn.closest('.inline-add').querySelector('[data-act="only-input"]');
-      if (input.value) { patchMe(applyPatch(me, { onlyDates: [input.value] }), { immediate: true }); }
+    case 'cal-mode': state.calMode = btn.dataset.mode; render(); break;
+    case 'clear-only':
+      if (!confirm('Clear the short list, so every day is back in play?')) break;
+      patchMe({ onlyDates: [] }, { immediate: true });
       break;
-    }
-    case 'rm-only':
-      patchMe({ onlyDates: me.onlyDates.filter(d => d !== btn.dataset.val) }, { immediate: true }); break;
     case 'rm-unlock':
       patchMe({ unlocks: (me.unlocks || []).filter(u => u.id !== btn.dataset.val) }, { immediate: true }); break;
-
-    case 'add-range': {
-      const wrap = btn.closest('.inline-add');
-      const from = wrap.querySelector('[data-act="range-from"]').value;
-      const to = wrap.querySelector('[data-act="range-to"]').value;
-      if (!from || !to) { toast('Pick both ends of the stretch.', true); break; }
-      const [start, end] = daysBetween(from, to) >= 0 ? [from, to] : [to, from];
-      wrap.querySelector('[data-act="range-from"]').value = '';
-      wrap.querySelector('[data-act="range-to"]').value = '';
-      patchMe({ blackoutRanges: [...(me.blackoutRanges || []), { start, end }] }, { immediate: true });
-      break;
-    }
 
     case 'edit-unlock': {
       const u = (me.unlocks || []).find(x => x.id === btn.dataset.val);

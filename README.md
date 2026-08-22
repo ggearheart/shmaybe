@@ -30,9 +30,10 @@ It models planning as a staged constraint search rather than a poll:
    inclusiveness has no business making it hard to say no — but it then offers
    a counter-offer instead: usually "no" isn't the whole truth, and "I could,
    if…" keeps you in the count where disappearing doesn't.
-4. **Availability, once** — which weekdays work, dates you're out, a short list
-   of dates that *do* work, how much notice you need. You give this a single
-   time and it applies to every idea.
+4. **Availability, once** — which weekdays work, a calendar of days you can't
+   do (tap as many as you like; drag across a stretch on a computer), a short
+   list of days that *are* the only ones that work, and how much notice you
+   need. You give this a single time and it applies to every idea.
 5. **Plain English** — type it the way you'd text it and hit **Read it &
    suggest**. The parser proposes constraints as chips you tap to accept, and
    never applies anything on its own.
