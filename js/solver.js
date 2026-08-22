@@ -291,14 +291,23 @@ export function verdict(trip, asOf = todayYMD()) {
  * do the hike" is a fact about interest, not about dates.
  * ========================================================================= */
 
-/** Project a plan into the single-activity shape the scorers above expect. */
+/**
+ * Project a plan into the single-activity shape the scorers above expect.
+ *
+ * A plan with no ideas yet is not a broken plan — it's the normal state while
+ * you are still collecting "when could you go?". In that case everybody in the
+ * plan counts as in, so the date search runs on the availability people have
+ * already given instead of waiting for an idea nobody has proposed.
+ */
 export function activityView(plan, activityId) {
+  const implicit = !(plan.activities || []).length;
   return {
     window: plan.window,
     hypotheses: [],
+    implicit,
     participants: plan.participants.map(p => ({
       ...p,
-      status: p.interests?.[activityId]?.level || 'pending',
+      status: implicit ? 'yes' : (p.interests?.[activityId]?.level || 'pending'),
     })),
   };
 }
@@ -355,9 +364,16 @@ export function unlockOpportunities(view, asOf = todayYMD()) {
   return [...byKey.values()].sort((a, b) => b.dates.length - a.dates.length || a.gain - b.gain);
 }
 
-/** Everyone who hasn't said anything about anything yet. */
+/**
+ * Everyone who hasn't said anything about anything yet.
+ *
+ * With no activities on the table there is nothing to be silent *about* —
+ * without this guard the emptiness makes the test vacuously true and the app
+ * nags everybody to answer a question it never asked.
+ */
 export function silentParticipants(plan) {
   const ids = (plan.activities || []).map(a => a.id);
+  if (!ids.length) return [];
   return plan.participants.filter(p =>
     !ids.some(id => p.interests?.[id] && p.interests[id].level !== 'pending'));
 }

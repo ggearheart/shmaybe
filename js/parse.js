@@ -3,7 +3,7 @@
 // suggestions the organizer taps to accept, because a wrong guess that gets
 // silently applied is worse than no guess at all.
 
-import { fromYMD, toYMD, weekOf, fmtShort, WEEKDAY_LONG } from './dates.js';
+import { fromYMD, toYMD, weekOf, fmtShort, addDays, daysBetween, WEEKDAY_LONG } from './dates.js';
 
 const DAY_WORDS = [
   ['sunday', 'sundays', 'sun', 'suns'],
@@ -258,10 +258,58 @@ export function parseReply(raw, win) {
       { blackoutRanges: [wk] });
   }
 
+  // --- Open-ended cutoffs: "before Sept 5th", "after the 20th" -------------
+  // Val wrote "Before Sept 5th." and it vanished: the date was read as a single
+  // day rather than a boundary, so the hardest constraint in the message was
+  // the one thing that didn't land.
+  // "the" is deliberately left for the date matcher — the bare-ordinal rule
+  // needs it ("by the 15th" finds nothing if "the" is eaten here).
+  const cutoffRe = /\b(before|after|by|from|starting|until|til|till|up to|no later than|no earlier than)\s+/g;
+  const cutoffs = [];
+  let cm;
+  while ((cm = cutoffRe.exec(text))) {
+    if (!hard(cm.index)) continue;
+    const at = cm.index + cm[0].length;
+    const tail = text.slice(at, at + 28);
+    let hit = findDateMentions(tail, win)[0];
+
+    // "before October" — a month with no day means the start of that month.
+    if (!hit || hit.index > 5) {
+      const mo = /^(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\b/.exec(tail);
+      if (mo && MONTHS[mo[1]] !== undefined) {
+        hit = { ymd: resolveDate(MONTHS[mo[1]], 1, win), index: 0 };
+      } else continue;
+    }
+
+    const word = cm[1];
+    let isBefore = /^(before|by|until|til|till|up to|no later than)$/.test(word);
+    // "not until October" is the opposite of "until October".
+    if (/\bnot\s+$/.test(text.slice(Math.max(0, cm.index - 6), cm.index))) isBefore = !isBefore;
+
+    if (isBefore) {
+      // "before Sept 5" rules out Sept 5 onwards; "by Sept 5" is the same ask.
+      if (daysBetween(hit.ymd, win.end) >= 0) {
+        push(`cut-b-${hit.ymd}`, `Nothing from ${fmtShort(hit.ymd)} onwards`,
+          `Keeps it before ${fmtShort(hit.ymd)}`,
+          { blackoutRanges: [{ start: hit.ymd, end: win.end }] });
+      }
+    } else {
+      // "after the 20th" / "from the 20th" rules out everything up to it.
+      const cut = addDays(hit.ymd, word === 'after' ? 0 : -1);
+      if (daysBetween(win.start, cut) >= 0) {
+        push(`cut-a-${hit.ymd}`, `Nothing before ${fmtShort(hit.ymd)}`,
+          `Keeps it ${word} ${fmtShort(hit.ymd)}`,
+          { blackoutRanges: [{ start: win.start, end: cut }] });
+      }
+    }
+    cutoffs.push(at + hit.index);
+  }
+
   // --- Specific dates -------------------------------------------------------
   const dates = findDateMentions(text, win);
   const weekOfSpans = [...text.matchAll(/\bweek of\b/g)].map(m => m.index);
-  const loose = dates.filter(d => hard(d.index) &&
+  const nearCutoff = i => cutoffs.some(c => Math.abs(c - i) <= 3);
+  const loose = dates.filter(d => hard(d.index) && !nearCutoff(d.index) &&
     !weekOfSpans.some(i => d.index > i && d.index - i < 24) && !isNegated(text, d.index));
 
   // "the 19th or the 26th could work" — offer the whole short list in one tap.
@@ -273,6 +321,7 @@ export function parseReply(raw, win) {
 
   for (const d of dates) {
     if (!hard(d.index)) continue;                                          // it's an offer, see below
+    if (nearCutoff(d.index)) continue;                                     // already read as a cutoff
     if (weekOfSpans.some(i => d.index > i && d.index - i < 24)) continue;  // already handled
     const neg = isNegated(text, d.index);
     const only = /\b(only|just|nothing but)\b/.test(text.slice(Math.max(0, d.index - 40), d.index));

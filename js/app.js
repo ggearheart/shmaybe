@@ -210,7 +210,19 @@ function renderYou() {
     </div>
 
     <h3 class="sectionhead">What are you up for?</h3>
-    ${activities || '<div class="card empty">No ideas yet — add one on the Group tab.</div>'}
+    ${activities || `
+      <div class="card">
+        <p class="hint">Nobody has suggested anything yet, so there's nothing to say
+          yes or no to — that's why the app hasn't asked you. Put the first idea up
+          and everyone gets in / maybe / out buttons for it.</p>
+        <form data-act="add-activity-form" style="margin-top:.6rem">
+          <label class="field"><span>What should we do?</span>
+            <input name="title" type="text" placeholder="Kayak to see the bats" required></label>
+          <button type="submit" class="btn btn-primary btn-sm">Put it up</button>
+        </form>
+        <p class="hint">Meanwhile the <b>When</b> tab already works — it's using the
+          availability everyone has given.</p>
+      </div>`}
 
     <h3 class="sectionhead">When could you go?</h3>
     <div class="card">
@@ -388,11 +400,11 @@ function renderGroup() {
       <h3>Propose an alternative</h3>
       <p class="hint">Anyone can. It gets scored against the others, so a second idea
         that more people can make will show up as the better plan.</p>
-      <form id="add-activity" style="margin-top:.5rem">
+      <form data-act="add-activity-form" style="margin-top:.5rem">
         <label class="field"><span>What is it?</span>
-          <input id="a-title" type="text" placeholder="River hike instead" required></label>
+          <input name="title" type="text" placeholder="River hike instead" required></label>
         <label class="field"><span>Anything to add? (optional)</span>
-          <input id="a-detail" type="text" placeholder="easier, no boats needed"></label>
+          <input name="detail" type="text" placeholder="easier, no boats needed"></label>
         <button type="submit" class="btn btn-primary btn-sm">Add it</button>
       </form>
     </div>
@@ -441,14 +453,10 @@ function renderWhen() {
   const p = state.plan;
   const box = $('#panel-when');
 
-  if (!p.activities.length) {
-    box.innerHTML = '<div class="card empty">Add an idea on the Group tab first.</div>';
-    return;
-  }
-
-  const board = compareActivities(p);
-  const chosen = board.find(b => b.activity.id === state.activityId) || board[0];
-  const view = chosen.view;
+  const implicit = !p.activities.length;
+  const board = implicit ? [] : compareActivities(p);
+  const chosen = implicit ? null : (board.find(b => b.activity.id === state.activityId) || board[0]);
+  const view = implicit ? activityView(p, null) : chosen.view;
   const active = activeParticipants(view);
   const ranked = rankDates(view);
   const full = ranked.filter(s => s.everyone);
@@ -481,7 +489,18 @@ function renderWhen() {
       </div>`;
   }
 
-  html += `<h3 class="sectionhead">${esc(chosen.activity.title)}</h3>`;
+  if (implicit) {
+    html += `
+      <div class="card">
+        <h2>Dates that work for everyone in the plan</h2>
+        <p class="hint">Nobody has proposed an activity yet, so this is scored on
+          availability alone — everyone in the plan counts as in.
+          <button class="linkbtn" data-act="go-group">Add an idea</button> to start
+          tracking who's up for what.</p>
+      </div>`;
+  } else {
+    html += `<h3 class="sectionhead">${esc(chosen.activity.title)}</h3>`;
+  }
 
   if (!active.length) {
     html += `<div class="card empty">Nobody has said they're in for this one yet.</div>`;
@@ -580,8 +599,12 @@ function draft(id, title, hint, body) {
 
 function renderAsk() {
   const p = state.plan;
-  const board = compareActivities(p);
-  const chosen = board.find(b => b.activity.id === state.activityId) || board[0];
+  const implicit = !p.activities.length;
+  const board = implicit ? [] : compareActivities(p);
+  const chosen = implicit
+    ? { activity: { title: p.title, id: null }, view: activityView(p, null),
+        activeCount: activeParticipants(activityView(p, null)).length }
+    : (board.find(b => b.activity.id === state.activityId) || board[0]);
   const silent = silentParticipants(p);
   let html = '';
 
@@ -590,6 +613,15 @@ function renderAsk() {
     `Trying to sort out ${p.title} — ${fmtRange(p.window.start, p.window.end)}.\n\n` +
     `Tap here, put in when you can go, and say what you're up for:\n${shareURL()}\n\n` +
     `Takes a minute. No signup, and you can change it later.`);
+
+  if (implicit) {
+    // Nagging people to "reply with at least a maybe" when there is nothing to
+    // reply to was the old behaviour. Ask the question that actually applies.
+    html += draft('d-idea', 'Nobody has suggested anything yet',
+      `You have availability from ${p.participants.length} ${p.participants.length === 1 ? 'person' : 'people'} but no idea on the table, so there's nothing for anyone to be in or out of.`,
+      `We've got everyone's dates for ${p.title} — now what are we actually doing?\n\n` +
+      `Throw an idea in here and everyone can say if they're up for it:\n${shareURL()}`);
+  }
 
   if (silent.length) {
     html += draft('d-chase', 'Chase the quiet ones',
@@ -603,17 +635,18 @@ function renderAsk() {
     const ranked = rankDates(view);
     const full = ranked.filter(s => s.everyone);
     const name = id => view.participants.find(x => x.id === id)?.name || '?';
+    const what = implicit ? p.title : chosen.activity.title;
 
     if (full.length) {
-      html += draft('d-lock', 'Lock it in',
-        `These clear every constraint on record for ${chosen.activity.title}.`,
+      html += draft('d-lock', 'Lock in a date',
+        `These clear every constraint on record${implicit ? '' : ` for ${chosen.activity.title}`}.`,
         `Good news — ${full.slice(0, 3).map(s => fmtShort(s.date)).join(', ')} work for everyone ` +
-        `for ${chosen.activity.title}.\n\nI'm leaning ${fmtLong(full[0].date)}. Any objection before I book it?`);
+        `for ${what}.\n\nI'm leaning ${fmtLong(full[0].date)}. Any objection before I book it?`);
     } else if (ranked.length) {
       const picks = ranked.slice(0, 3);
       html += draft('d-narrow', 'Narrow it down',
         'Nothing catches everyone, so offer the best few and name the sticking point.',
-        `No single date works for all of us on ${chosen.activity.title}. Closest three:\n\n` +
+        `No single date works for all of us on ${what}. Closest three:\n\n` +
         picks.map(s => `• ${fmtLong(s.date)} — ${s.in.map(name).join(', ')}`).join('\n') +
         `\n\nCan anyone stretch? Otherwise I'll go with ${fmtLong(picks[0].date)}.`);
     }
@@ -623,7 +656,7 @@ function renderAsk() {
       const who = o.conditions.map(c => name(c.id)).join(' & ');
       html += draft(`d-unlock-${o.dates[0]}`, `Solve it for ${who}`,
         `${o.dates.length} date${o.dates.length === 1 ? '' : 's'} go to full turnout if this gets sorted.`,
-        `We're one thing away from all of us making ${chosen.activity.title} on ` +
+        `We're one thing away from all of us making ${what} on ` +
         `${o.dates.slice(0, 3).map(fmtShort).join(' / ')}.\n\n` +
         o.conditions.map(c => `${name(c.id)} needs: ${c.condition}`).join('\n') +
         `\n\nCan anyone help with that?`);
@@ -647,7 +680,8 @@ function renderAsk() {
     }
 
     // Only worth suggesting when a different idea genuinely does better.
-    const better = board.find(b => b.activity.id !== chosen.activity.id && b.reach > chosen.reach);
+    const better = implicit ? null
+      : board.find(b => b.activity.id !== chosen.activity.id && b.reach > chosen.reach);
     if (better) {
       html += draft('d-switch', 'Suggest the other idea',
         `${better.activity.title} reaches ${better.reach} people against ${chosen.reach} for ${chosen.activity.title}.`,
@@ -877,6 +911,7 @@ document.addEventListener('click', async e => {
       renderWhen();
       break;
 
+    case 'go-group': state.tab = 'group'; render(); break;
     case 'open-share': openShare(); break;
 
     case 'copy': {
@@ -967,12 +1002,17 @@ document.addEventListener('submit', async e => {
       }
     });
   }
-  if (e.target.id === 'add-activity') {
+  if (e.target.dataset.act === 'add-activity-form') {
     e.preventDefault();
+    const title = e.target.elements.title?.value.trim();
+    const detail = e.target.elements.detail?.value.trim() || '';
+    if (!title) return;
     await guard(async () => {
-      await api.addActivity(state.slug, state.me.token, $('#a-title').value.trim(), $('#a-detail').value.trim());
+      const first = !state.plan.activities.length;
+      await api.addActivity(state.slug, state.me.token, title, detail);
       await refresh();
-      toast('Added — it will be scored against the others.');
+      toast(first ? 'Up there — everyone can now say if they\'re in.'
+                  : 'Added — it will be scored against the others.');
     });
   }
 });

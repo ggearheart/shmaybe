@@ -17,6 +17,9 @@ without it the app still runs, but in one browser only.
 
 It models planning as a staged constraint search rather than a poll:
 
+0. **Before anyone suggests anything** — a plan with no ideas on it still finds
+   dates, scoring the availability people have already given. Collecting "when
+   could you go?" is a useful stage on its own.
 1. **Interest, per idea** — a plan can hold several competing activities.
    Everyone marks themselves in / maybe / out on each one. Only in and maybe
    constrain the search; an "out" stops costing you dates.
@@ -72,6 +75,8 @@ It models planning as a staged constraint search rather than a poll:
 | `only Saturdays, but I could do a Monday if we start after 5` | Saturday only **and** an offer: Mondays, if we start after 5 |
 
 | `yes! but only if it's not the week of the 14th` | blackout for that week — **not** an offer |
+| `Before Sept 5th. Phil is not available Monday and Weds` | nothing from Sep 5 onwards · no Mon/Wed |
+| `not until October` | nothing before Oct 1 |
 
 The last two rows are the interesting ones. A conditional clause reverses the
 meaning of everything inside it — treating that "Monday" as a restriction would
