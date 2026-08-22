@@ -29,6 +29,8 @@ export const isShared = driver.mode === 'supabase';
 
 export const createPlan        = (...a) => driver.createPlan(...a);
 export const getPlan           = (...a) => driver.getPlan(...a);
+export const whoami            = (...a) => driver.whoami(...a);
+export const releaseParticipant = (...a) => driver.releaseParticipant(...a);
 export const joinPlan          = (...a) => driver.joinPlan(...a);
 export const updateParticipant = (...a) => driver.updateParticipant(...a);
 export const fillInFor         = (...a) => driver.fillInFor(...a);

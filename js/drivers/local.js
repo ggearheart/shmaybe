@@ -72,6 +72,23 @@ export async function getPlan(slug) {
   };
 }
 
+export async function whoami(slug, token) {
+  const p = db().plans[slug];
+  if (!p) return null;
+  const me = p.participants.find(x => x.claimToken === token);
+  return me ? { participantId: me.id, name: me.name } : null;
+}
+
+export async function releaseParticipant(slug, token) {
+  const d = db();
+  const me = auth(d, slug, token);
+  const name = me.name;
+  me.claimToken = null;
+  me.updatedAt = stamp();
+  write(d);
+  return { ok: true, name };
+}
+
 export async function joinPlan(slug, name) {
   const d = db();
   const p = plan(d, slug);
@@ -98,8 +115,14 @@ export async function updateParticipant(slug, token, patch) {
   const d = db();
   const me = auth(d, slug, token);
   for (const [k, v] of Object.entries(patch)) {
-    if (k === 'name') { if (String(v).trim()) me.name = String(v).trim(); }
-    else me[k] = v;
+    if (k === 'name') {
+      const clean = String(v).trim();
+      if (!clean) continue;
+      if (plan(d, slug).participants.some(x => x.id !== me.id && x.name.toLowerCase() === clean.toLowerCase())) {
+        throw new Error(`Somebody in this plan is already called ${clean}`);
+      }
+      me.name = clean;
+    } else me[k] = v;
   }
   me.updatedAt = stamp();
   write(d);

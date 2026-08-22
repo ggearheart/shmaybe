@@ -29,6 +29,9 @@ const state = {
 
 const meRow = () => state.plan?.participants.find(p => p.id === state.me?.participantId) || null;
 const shareURL = () => `${location.origin}${location.pathname}?p=${state.slug}`;
+/** The share link plus your claim token — this is how you move to another
+ *  device. It is yours, not the group's; anyone holding it edits as you. */
+const personalURL = () => `${shareURL()}&me=${state.me.token}`;
 
 function toast(msg, bad = false) {
   let el = $('#toast');
@@ -150,7 +153,9 @@ function renderJoinGate() {
         <input id="join-name" type="text" placeholder="Your name" autocomplete="given-name" required>
         <button type="submit" class="btn btn-primary">Join</button>
       </form>
-      <p class="hint">Your answers stay editable on this device — no password, no email.</p>
+      <p class="hint">Your answers stay editable on this device — no password, no email.
+        Already in this plan on another device? Open the private link from there
+        (You → “Open on another device”) instead of joining twice.</p>
     </div>`;
 }
 
@@ -189,7 +194,19 @@ function renderYou() {
   $('#panel-you').innerHTML = `
     <div class="card">
       <h3>You're in as ${esc(me.name)}</h3>
-      <p class="hint">Wrong person? <button class="linkbtn" data-act="switch-identity">switch</button></p>
+      ${state.renaming ? `
+        <div class="inline-add" style="margin-top:.4rem">
+          <input id="rename-input" type="text" value="${esc(me.name)}" style="flex:1;min-width:8rem">
+          <button class="btn btn-sm btn-primary" data-act="rename-save">Save</button>
+          <button class="btn btn-sm btn-ghost" data-act="rename-cancel">Cancel</button>
+        </div>` : `
+        <div class="inline-add" style="margin-top:.4rem">
+          <button class="btn btn-sm" data-act="rename-start">Change name</button>
+          <button class="btn btn-sm" data-act="copy-personal">Open on another device</button>
+          <button class="btn btn-sm btn-danger" data-act="not-me">Not me</button>
+        </div>
+        <p class="hint">“Open on another device” copies a private link that carries your
+          spot with it — don't put that one in the group chat.</p>`}
     </div>
 
     <h3 class="sectionhead">What are you up for?</h3>
@@ -749,10 +766,37 @@ document.addEventListener('click', async e => {
       });
       break;
 
-    case 'switch-identity':
-      api.forgetIdentity(state.slug);
-      state.me = null;
-      render();
+    case 'rename-start': state.renaming = true; render(); break;
+    case 'rename-cancel': state.renaming = false; render(); break;
+    case 'rename-save':
+      await guard(async () => {
+        const name = $('#rename-input').value.trim();
+        if (!name || name === me.name) { state.renaming = false; render(); return; }
+        await api.updateParticipant(state.slug, state.me.token, { name });
+        state.me.name = name;
+        api.rememberIdentity(state.slug, { ...state.me, title: state.plan.title });
+        state.renaming = false;
+        await refresh();
+        toast(`You're now ${name}.`);
+      });
+      break;
+
+    case 'copy-personal':
+      copyText(personalURL(), () => toast('Private link copied — it signs you in as you.'));
+      break;
+
+    case 'not-me':
+      // Releasing matters: a forgotten token would lock this row for everyone,
+      // including whoever it actually belongs to.
+      if (!confirm(`Give up the "${me.name}" spot? Their answers stay on the plan, and `
+                 + `whoever it really is can claim it.`)) break;
+      await guard(async () => {
+        try { await api.releaseParticipant(state.slug, state.me.token); }
+        catch (err) { console.warn('Could not release the spot:', err); }
+        api.forgetIdentity(state.slug);
+        state.me = null;
+        await refresh();
+      });
       break;
 
     case 'interest':
@@ -970,11 +1014,33 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) poll
 /* ------------------------------------------------------------------ boot -- */
 
 (async function boot() {
-  const slug = new URLSearchParams(location.search).get('p');
+  const params = new URLSearchParams(location.search);
+  const slug = params.get('p');
   if (!slug) { renderLanding(); return; }
   state.slug = slug;
   state.me = api.identity(slug);
   $('#loading').hidden = false;
+
+  // A personal link carries a claim token. Verify it before trusting it, then
+  // strip it from the address bar so it stops riding along in history and
+  // screenshots.
+  const token = params.get('me');
+  if (token) {
+    history.replaceState({}, '', `?p=${encodeURIComponent(slug)}`);
+    try {
+      const who = await api.whoami(slug, token);
+      if (who) {
+        state.me = { participantId: who.participantId, token, name: who.name };
+        api.rememberIdentity(slug, { ...state.me });
+        setTimeout(() => toast(`Signed in as ${who.name}.`), 300);
+      } else {
+        setTimeout(() => toast('That personal link is no longer valid.', true), 300);
+      }
+    } catch (e) {
+      console.warn('Could not verify that personal link:', e);
+    }
+  }
+
   try {
     await refresh();
     state.lastPulse = await api.pulse(slug);

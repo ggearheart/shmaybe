@@ -6,7 +6,9 @@ of "yes, but…", and now you have to hold all of it in your head at once.
 
 This holds it for you.
 
-**No accounts, no logins.** You text one link. Everyone opens it on their own
+**No accounts, no logins.** Your spot is held by a token in your browser, so
+there's a private link to carry it to another device, a rename, and a way to
+hand a spot back if you tapped the wrong name. You text one link. Everyone opens it on their own
 phone, says what they're up for, and puts in when they can go — in pickers, in
 plain English, or both. See [SETUP.md](SETUP.md) to switch on shared mode;
 without it the app still runs, but in one browser only.

@@ -37,10 +37,31 @@ to *shared*.
 
 ## Already have a database from an earlier version?
 
-Run [`supabase-migration-2.sql`](supabase-migration-2.sql) — it adds
-`fill_in_for()`, which the thread reader needs, and is safe to re-run. If you
-skip it, the app will tell you which function is missing rather than failing
+Run the migrations you're missing, oldest first. Both are safe to re-run, and
+if you skip one the app will name the missing function rather than failing
 mysteriously.
+
+| File | Adds |
+| --- | --- |
+| [`supabase-migration-2.sql`](supabase-migration-2.sql) | `fill_in_for()` — the thread reader |
+| [`supabase-migration-3.sql`](supabase-migration-3.sql) | `whoami()` / `release_participant()` — getting back into your own row |
+
+## Getting back into your own row
+
+Your claim token lives in one browser. Three things follow, and each has an
+answer on the **You** tab:
+
+- **Same person, another device** — “Open on another device” copies a private
+  link with your token in it. Open that on the new phone and you arrive as
+  yourself. It's yours, not the group's: anyone holding it edits as you. The
+  token is stripped from the address bar as soon as it's used, so it doesn't
+  linger in history or screenshots.
+- **Wrong name** — “Change name” renames your row in place, keeping every
+  constraint. It refuses a name somebody else in the plan already has.
+- **Wrong spot entirely** — “Not me” releases it. The row and its answers stay
+  on the plan; it just goes back to unclaimed so the right person can take it.
+  This matters: simply forgetting a token used to lock that row for everyone,
+  permanently.
 
 ## Speaking for other people
 

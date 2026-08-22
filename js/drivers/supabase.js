@@ -41,6 +41,11 @@ export const createPlan = ({ title, start, end, activity, name }) =>
 
 export const getPlan = slug => rpc('get_plan', { p_slug: slug });
 
+export const whoami = (slug, token) => rpc('whoami', { p_slug: slug, p_token: token });
+
+export const releaseParticipant = (slug, token) =>
+  rpc('release_participant', { p_slug: slug, p_token: token });
+
 export const joinPlan = (slug, name) => rpc('join_plan', { p_slug: slug, p_name: name });
 
 export const updateParticipant = (slug, token, patch) =>

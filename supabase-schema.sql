@@ -262,6 +262,36 @@ begin
   if v_part is null then raise exception 'Not your row to edit'; end if;
   perform public.shmaybe_apply_patch(v_part, p_patch);
   return jsonb_build_object('ok', true);
+exception
+  when unique_violation then
+    raise exception 'Somebody in this plan is already called %', trim(p_patch->>'name')
+      using errcode = 'unique_violation';
+end;
+$$;
+
+-- Validate a token and say who it belongs to — used when adopting a personal
+-- link, so a stale token is rejected up front instead of failing on first write.
+create or replace function public.whoami(p_slug text, p_token uuid)
+returns jsonb language sql stable security definer set search_path = public as $$
+  select jsonb_build_object('participantId', p.id, 'name', p.name)
+  from public.participants p
+  join public.plans pl on pl.id = p.plan_id
+  where pl.slug = p_slug and p.claim_token = p_token;
+$$;
+
+-- Let go of a spot. The row and its constraints survive; it just becomes
+-- unclaimed so the right person can take it. Without this, forgetting a token
+-- orphaned the row for good.
+create or replace function public.release_participant(p_slug text, p_token uuid)
+returns jsonb language plpgsql volatile security definer set search_path = public as $$
+declare
+  v_part uuid := public.shmaybe_auth(p_slug, p_token);
+  v_name text;
+begin
+  if v_part is null then raise exception 'That spot is not yours to release'; end if;
+  select name into v_name from public.participants where id = v_part;
+  update public.participants set claim_token = null, updated_at = now() where id = v_part;
+  return jsonb_build_object('ok', true, 'name', v_name);
 end;
 $$;
 
@@ -429,6 +459,8 @@ revoke execute on function
   public.join_plan(text, text),
   public.update_participant(text, uuid, jsonb),
   public.fill_in_for(text, uuid, text, jsonb, jsonb),
+  public.whoami(text, uuid),
+  public.release_participant(text, uuid),
   public.set_interest(text, uuid, uuid, text, text),
   public.add_activity(text, uuid, text, text),
   public.archive_activity(text, uuid, uuid),
@@ -446,6 +478,8 @@ grant execute on function
   public.join_plan(text, text),
   public.update_participant(text, uuid, jsonb),
   public.fill_in_for(text, uuid, text, jsonb, jsonb),
+  public.whoami(text, uuid),
+  public.release_participant(text, uuid),
   public.set_interest(text, uuid, uuid, text, text),
   public.add_activity(text, uuid, text, text),
   public.archive_activity(text, uuid, uuid),
