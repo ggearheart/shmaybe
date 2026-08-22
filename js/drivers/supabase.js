@@ -60,6 +60,13 @@ export const setInterest = (slug, token, activityId, level, note) =>
 export const addActivity = (slug, token, title, detail = '') =>
   rpc('add_activity', { p_slug: slug, p_token: token, p_title: title, p_detail: detail });
 
+export const updateActivity = (slug, token, activityId, title, detail) =>
+  rpc('update_activity', { p_slug: slug, p_token: token, p_activity: activityId,
+                           p_title: title, p_detail: detail ?? null });
+
+export const updateWindow = (slug, token, start, end) =>
+  rpc('update_window', { p_slug: slug, p_token: token, p_start: start, p_end: end });
+
 export const archiveActivity = (slug, token, activityId) =>
   rpc('archive_activity', { p_slug: slug, p_token: token, p_activity: activityId });
 

@@ -17,19 +17,21 @@ without it the app still runs, but in one browser only.
 
 It models planning as a staged constraint search rather than a poll:
 
-0. **Before anyone suggests anything** — a plan with no ideas on it still finds
-   dates, scoring the availability people have already given. Collecting "when
-   could you go?" is a useful stage on its own.
-1. **Interest, per idea** — a plan can hold several competing activities.
-   Everyone marks themselves in / maybe / out on each one. Only in and maybe
-   constrain the search; an "out" stops costing you dates.
-2. **Availability, once** — which weekdays work, dates you're out, a short list
+1. **A plan is its ideas.** There's no container to name — you say what you
+   want to do, and that names the plan. Anyone who joins can put up an
+   alternative, and the person who proposed an idea can rename it or add detail
+   as it firms up. Renaming the leading idea renames the plan, because they're
+   the same thing.
+2. **Interest, per idea** — several ideas can compete inside one plan. Everyone
+   marks themselves in / maybe / out on each. Only in and maybe constrain the
+   search; an "out" stops costing you dates.
+3. **Availability, once** — which weekdays work, dates you're out, a short list
    of dates that *do* work, how much notice you need. You give this a single
    time and it applies to every idea.
-3. **Plain English** — type it the way you'd text it and hit **Read it &
+4. **Plain English** — type it the way you'd text it and hit **Read it &
    suggest**. The parser proposes constraints as chips you tap to accept, and
    never applies anything on its own.
-4. **Inclusivity scoring** — every date is scored by who can make it, with a
+5. **Inclusivity scoring** — every date is scored by who can make it, with a
    *maybe* weighted less than a *yes*. Tap any date to see who's out and why.
 
 ## The parts that do the thinking

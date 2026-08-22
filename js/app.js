@@ -22,6 +22,7 @@ const state = {
   tab: 'you',
   activityId: null,    // which activity the When tab is showing
   suggestions: null,   // parse result for my own note
+  editingActivity: null,
   openDates: new Set(),
   busy: false,
   lastPulse: null,
@@ -112,13 +113,13 @@ function renderLanding() {
 function renderHead() {
   const p = state.plan;
   const days = eachDay(p.window.start, p.window.end).filter(d => daysBetween(todayYMD(), d) >= 0);
+  const others = Math.max(0, p.activities.length - 1);
   $('#plan-head').innerHTML = `
     <div class="card planhead">
-      <h2>${esc(p.title)}</h2>
+      <h2>${esc(p.title)}${others ? `<span class="alt"> +${others} alternative${others === 1 ? '' : 's'}</span>` : ''}</h2>
       <p class="hint">${esc(fmtRange(p.window.start, p.window.end))} ·
         ${days.length} candidate day${days.length === 1 ? '' : 's'} ·
-        ${p.participants.length} ${p.participants.length === 1 ? 'person' : 'people'} ·
-        ${p.activities.length} ${p.activities.length === 1 ? 'idea' : 'ideas'}</p>
+        ${p.participants.length} ${p.participants.length === 1 ? 'person' : 'people'}</p>
     </div>`;
 
   const pill = $('#mode-pill');
@@ -382,24 +383,41 @@ function renderGroup() {
       </div>
     </div>
 
-    <h3 class="sectionhead">Ideas on the table</h3>
-    ${p.activities.map(a => `
-      <div class="card actline">
-        <div class="person-head">
-          <div style="flex:1;min-width:0">
-            <b>${esc(a.title)}</b>
-            ${a.detail ? `<div class="hint">${esc(a.detail)}</div>` : ''}
-            <div class="hint">${a.proposedBy ? `proposed by ${esc(a.proposedBy)}` : ''}</div>
-          </div>
-          ${a.proposedBy === me?.name
-            ? `<button class="rm" data-act="archive-activity" data-val="${a.id}" title="Retire this idea">×</button>` : ''}
-        </div>
-      </div>`).join('') || '<div class="card empty">No ideas yet.</div>'}
+    <h3 class="sectionhead">On the table</h3>
+    ${p.activities.map((a, i) => {
+      const mine = !a.proposedBy || a.proposedBy === me?.name;
+      const editing = state.editingActivity === a.id;
+      return `
+      <div class="card actline" data-aid="${a.id}">
+        ${editing ? `
+          <form data-act="edit-activity-form" data-val="${a.id}">
+            <label class="field"><span>What is it?</span>
+              <input name="title" type="text" value="${esc(a.title)}" required></label>
+            <label class="field"><span>Details (optional)</span>
+              <input name="detail" type="text" value="${esc(a.detail)}"
+                placeholder="meet at the ramp, bring a headlamp"></label>
+            <div class="inline-add">
+              <button type="submit" class="btn btn-sm btn-primary">Save</button>
+              <button type="button" class="btn btn-sm btn-ghost" data-act="edit-cancel">Cancel</button>
+            </div>
+          </form>` : `
+          <div class="person-head">
+            <div style="flex:1;min-width:0">
+              <b>${esc(a.title)}</b>${i === 0 ? ' <span class="pill">names the plan</span>' : ''}
+              ${a.detail ? `<div class="hint">${esc(a.detail)}</div>` : ''}
+              <div class="hint">${a.proposedBy ? `put up by ${esc(a.proposedBy)}` : 'came with the plan'}</div>
+            </div>
+            ${mine ? `<button class="btn btn-sm" data-act="edit-activity" data-val="${a.id}">Edit</button>` : ''}
+            ${mine && p.activities.length > 1
+              ? `<button class="rm" data-act="archive-activity" data-val="${a.id}" title="Retire this idea">×</button>` : ''}
+          </div>`}
+      </div>`;
+    }).join('') || '<div class="card empty">No ideas yet.</div>'}
 
     <div class="card">
-      <h3>Propose an alternative</h3>
-      <p class="hint">Anyone can. It gets scored against the others, so a second idea
-        that more people can make will show up as the better plan.</p>
+      <h3>Put up an alternative</h3>
+      <p class="hint">Anyone can. It gets scored against the rest, so a second idea
+        more people can make will show up as the better plan.</p>
       <form data-act="add-activity-form" style="margin-top:.5rem">
         <label class="field"><span>What is it?</span>
           <input name="title" type="text" placeholder="River hike instead" required></label>
@@ -413,9 +431,8 @@ function renderGroup() {
     ${roster}
 
     <div class="card">
-      <h3>Plan settings</h3>
-      <label class="field"><span>Title</span>
-        <input id="p-title" type="text" value="${esc(p.title)}"></label>
+      <h3>When could this happen?</h3>
+      <p class="hint">The window every idea gets scored inside.</p>
       <div class="field-row">
         <label class="field"><span>No earlier than</span>
           <input id="p-start" type="date" value="${p.window.start}"></label>
@@ -899,11 +916,14 @@ document.addEventListener('click', async e => {
 
     case 'save-plan':
       await guard(async () => {
-        await api.updatePlan(state.slug, state.me.token, $('#p-title').value, $('#p-start').value, $('#p-end').value);
+        await api.updateWindow(state.slug, state.me.token, $('#p-start').value, $('#p-end').value);
         await refresh();
-        toast('Plan updated');
+        toast('Window updated');
       });
       break;
+
+    case 'edit-activity': state.editingActivity = btn.dataset.val; render(); break;
+    case 'edit-cancel': state.editingActivity = null; render(); break;
 
     case 'toggle-date':
       state.openDates.has(btn.dataset.date) ? state.openDates.delete(btn.dataset.date)
@@ -962,16 +982,14 @@ $('#create-plan').addEventListener('submit', async e => {
   const err = $('#create-error');
   err.hidden = true;
   await guard(async () => {
+    const idea = $('#c-activity').value.trim();
     const res = await api.createPlan({
-      title: $('#c-title').value.trim(),
-      start: $('#c-start').value,
-      end: $('#c-end').value,
-      activity: $('#c-activity').value.trim(),
-      name: $('#c-name').value.trim(),
+      title: idea, start: $('#c-start').value, end: $('#c-end').value,
+      activity: idea, name: $('#c-name').value.trim(),
     });
     state.slug = res.slug;
     state.me = { participantId: res.participantId, token: res.token, name: $('#c-name').value.trim() };
-    api.rememberIdentity(res.slug, { ...state.me, title: $('#c-title').value.trim() });
+    api.rememberIdentity(res.slug, { ...state.me, title: idea });
     history.replaceState({}, '', `?p=${res.slug}`);
     await refresh();
     openShare();
@@ -1001,6 +1019,17 @@ document.addEventListener('submit', async e => {
         else throw err;
       }
     });
+  }
+  if (e.target.dataset.act === 'edit-activity-form') {
+    e.preventDefault();
+    await guard(async () => {
+      await api.updateActivity(state.slug, state.me.token, e.target.dataset.val,
+        e.target.elements.title.value.trim(), e.target.elements.detail.value.trim());
+      state.editingActivity = null;
+      await refresh();
+      toast('Updated.');
+    });
+    return;
   }
   if (e.target.dataset.act === 'add-activity-form') {
     e.preventDefault();

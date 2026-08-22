@@ -420,3 +420,7 @@ dialog select {
   .reviewrow { grid-template-columns: 1fr; gap: .25rem; }
   .reviewrow p { margin-left: .2rem; }
 }
+
+/* The plan is named by its leading idea; alternatives are a footnote to it. */
+.planhead .alt { font-weight: 500; font-size: .8rem; color: var(--ink-3); }
+.actline form .field { margin-bottom: .5rem; }

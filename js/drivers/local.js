@@ -37,7 +37,8 @@ const stamp = () => new Date().toISOString();
 export const mode = 'local';
 
 export async function createPlan({ title, start, end, activity, name }) {
-  if (!String(title || '').trim()) throw new Error('A plan needs a title');
+  const label = String(activity || '').trim() || String(title || '').trim();
+  if (!label) throw new Error('Say what you want to do');
   if (end < start) throw new Error('The window ends before it starts');
   const d = db();
   const slug = slugify();
@@ -48,16 +49,12 @@ export async function createPlan({ title, start, end, activity, name }) {
         interests: {}, updatedAt: stamp() }
     : null;
   d.plans[slug] = {
-    id: uuid(), slug, title: title.trim(), window: { start, end },
-    activities: activity?.trim()
-      ? [{ id: uuid(), title: activity.trim(), detail: '', proposedBy: name?.trim() || '', createdAt: stamp() }]
-      : [],
+    id: uuid(), slug, title: label, window: { start, end },
+    activities: [{ id: uuid(), title: label, detail: '', proposedBy: name?.trim() || '', createdAt: stamp() }],
     participants: me ? [me] : [],
     updatedAt: stamp(),
   };
-  if (me && d.plans[slug].activities.length) {
-    me.interests[d.plans[slug].activities[0].id] = { level: 'yes', note: '' };
-  }
+  if (me) me.interests[d.plans[slug].activities[0].id] = { level: 'yes', note: '' };
   write(d);
   return { slug, participantId: me?.id ?? null, token };
 }
@@ -68,6 +65,9 @@ export async function getPlan(slug) {
   // Never hand the claim tokens back to the client.
   return {
     ...p,
+    // The plan is named by its oldest surviving idea; plan.title is only a
+    // fallback for data that predates the one-level model.
+    title: p.activities[0]?.title || p.title,
     participants: p.participants.map(({ claimToken, ...rest }) => ({ ...rest, claimed: !!claimToken })),
   };
 }
@@ -189,12 +189,43 @@ export async function addActivity(slug, token, title, detail = '') {
   return { activityId: a.id };
 }
 
+export async function updateActivity(slug, token, activityId, title, detail) {
+  const d = db();
+  const me = auth(d, slug, token);
+  const a = plan(d, slug).activities.find(x => x.id === activityId);
+  // An idea nobody claims belongs to the plan, so anyone in it can tend it.
+  if (!a || !(a.proposedBy === me.name || !a.proposedBy)) {
+    throw new Error('Only the person who proposed it can edit it');
+  }
+  if (String(title || '').trim()) a.title = title.trim();
+  if (detail != null) a.detail = detail;
+  plan(d, slug).updatedAt = stamp();
+  write(d);
+  return { ok: true };
+}
+
+export async function updateWindow(slug, token, start, end) {
+  const d = db();
+  auth(d, slug, token);
+  if (end < start) throw new Error('The window ends before it starts');
+  const p = plan(d, slug);
+  p.window = { start, end };
+  p.updatedAt = stamp();
+  write(d);
+  return { ok: true };
+}
+
 export async function archiveActivity(slug, token, activityId) {
   const d = db();
   const me = auth(d, slug, token);
   const p = plan(d, slug);
+  if (p.activities.length <= 1) {
+    throw new Error('That is the only idea here — put up another before retiring it');
+  }
   const a = p.activities.find(x => x.id === activityId);
-  if (!a || a.proposedBy !== me.name) throw new Error('Only the person who proposed it can retire it');
+  if (!a || !(a.proposedBy === me.name || !a.proposedBy)) {
+    throw new Error('Only the person who proposed it can retire it');
+  }
   p.activities = p.activities.filter(x => x.id !== activityId);
   p.participants.forEach(x => delete x.interests[activityId]);
   p.updatedAt = stamp();

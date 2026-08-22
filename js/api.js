@@ -36,6 +36,8 @@ export const updateParticipant = (...a) => driver.updateParticipant(...a);
 export const fillInFor         = (...a) => driver.fillInFor(...a);
 export const setInterest       = (...a) => driver.setInterest(...a);
 export const addActivity       = (...a) => driver.addActivity(...a);
+export const updateActivity    = (...a) => driver.updateActivity(...a);
+export const updateWindow      = (...a) => driver.updateWindow(...a);
 export const archiveActivity   = (...a) => driver.archiveActivity(...a);
 export const updatePlan        = (...a) => driver.updatePlan(...a);
 export const pulse             = (...a) => driver.pulse(...a);
