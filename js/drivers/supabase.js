@@ -54,6 +54,12 @@ export const updateParticipant = (slug, token, patch) =>
 export const fillInFor = (slug, token, name, patch = {}, interests = {}) =>
   rpc('fill_in_for', { p_slug: slug, p_token: token, p_name: name, p_patch: patch, p_interests: interests });
 
+export const inviteParticipant = (slug, token, name) =>
+  rpc('invite_participant', { p_slug: slug, p_token: token, p_name: name });
+
+export const removeParticipant = (slug, token, participantId) =>
+  rpc('remove_participant', { p_slug: slug, p_token: token, p_participant: participantId });
+
 export const setInterest = (slug, token, activityId, level, note) =>
   rpc('set_interest', { p_slug: slug, p_token: token, p_activity: activityId, p_level: level, p_note: note ?? null });
 

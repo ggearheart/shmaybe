@@ -34,6 +34,8 @@ export const releaseParticipant = (...a) => driver.releaseParticipant(...a);
 export const joinPlan          = (...a) => driver.joinPlan(...a);
 export const updateParticipant = (...a) => driver.updateParticipant(...a);
 export const fillInFor         = (...a) => driver.fillInFor(...a);
+export const inviteParticipant = (...a) => driver.inviteParticipant(...a);
+export const removeParticipant = (...a) => driver.removeParticipant(...a);
 export const setInterest       = (...a) => driver.setInterest(...a);
 export const addActivity       = (...a) => driver.addActivity(...a);
 export const updateActivity    = (...a) => driver.updateActivity(...a);

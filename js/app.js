@@ -23,6 +23,11 @@ const state = {
   activityId: null,    // which activity the When tab is showing
   suggestions: null,   // parse result for my own note
   editingActivity: null,
+  editingUnlock: null,
+  editingUnlockDays: null,
+  editingUnlockText: null,   // held in state: re-rendering the form would drop it
+  optOut: null,          // { activityId } — the counter-offer nudge
+  invite: null,          // { name, url } — the last invite link generated
   openDates: new Set(),
   busy: false,
   lastPulse: null,
@@ -33,6 +38,8 @@ const shareURL = () => `${location.origin}${location.pathname}?p=${state.slug}`;
 /** The share link plus your claim token — this is how you move to another
  *  device. It is yours, not the group's; anyone holding it edits as you. */
 const personalURL = () => `${shareURL()}&me=${state.me.token}`;
+/** Names who it's for, carries no token — safe to paste into a group chat. */
+const inviteURL = name => `${shareURL()}&for=${encodeURIComponent(name)}`;
 
 function toast(msg, bad = false) {
   let el = $('#toast');
@@ -137,17 +144,29 @@ function renderHead() {
 function renderJoinGate() {
   const gate = $('#join-gate');
   const unclaimed = state.plan.participants.filter(p => !p.claimed);
+  // An invite link names its recipient, so lead with that name instead of
+  // making them find themselves in a list.
+  const invited = state.invitedAs
+    && unclaimed.find(p => p.name.toLowerCase() === state.invitedAs.toLowerCase());
   gate.hidden = false;
   $('#plan-tabs').hidden = true;
   document.querySelectorAll('.panel').forEach(p => p.classList.remove('is-active'));
 
   gate.innerHTML = `
     <div class="card">
-      <h3>Who are you?</h3>
-      ${unclaimed.length ? `
-        <p class="hint">Someone already put these names down. Tap yours.</p>
+      ${invited ? `
+        <h3>Hi ${esc(invited.name)} — is that you?</h3>
         <div class="sugg-list" style="margin-top:.5rem">
-          ${unclaimed.map(p => `<button class="sugg" data-act="claim" data-name="${esc(p.name)}">${esc(p.name)}</button>`).join('')}
+          <button class="sugg" data-act="claim" data-name="${esc(invited.name)}">
+            Yes, I'm ${esc(invited.name)}<small>picks up your spot</small></button>
+        </div>
+        <p class="hint" style="margin-top:.7rem">Somebody else?</p>` : `
+      <h3>Who are you?</h3>`}
+      ${unclaimed.filter(u => u.id !== invited?.id).length ? `
+        ${invited ? '' : '<p class="hint">Someone already put these names down. Tap yours.</p>'}
+        <div class="sugg-list" style="margin-top:.5rem">
+          ${unclaimed.filter(u => u.id !== invited?.id).map(p =>
+            `<button class="sugg" data-act="claim" data-name="${esc(p.name)}">${esc(p.name)}</button>`).join('')}
         </div>
         <p class="hint" style="margin-top:.7rem">Not listed?</p>` : ''}
       <form id="join-form" class="inline-add" style="margin-top:.4rem">
@@ -189,6 +208,7 @@ function renderYou() {
           </div>
           ${interestButtons(a.id, mine)}
         </div>
+        ${state.optOut?.activityId === a.id ? counterOffer(a, state.optOut.level) : ''}
       </div>`;
   }).join('');
 
@@ -248,8 +268,16 @@ function renderYou() {
         </div>
         <div class="inline-add">
           <input type="date" data-act="blackout-input" min="${p.window.start}" max="${p.window.end}">
-          <button class="btn btn-sm" data-act="add-blackout">Block it</button>
+          <button class="btn btn-sm" data-act="add-blackout">Block that day</button>
         </div>
+        <div class="inline-add">
+          <input type="date" data-act="range-from" min="${p.window.start}" max="${p.window.end}">
+          <span class="hint">to</span>
+          <input type="date" data-act="range-to" min="${p.window.start}" max="${p.window.end}">
+          <button class="btn btn-sm" data-act="add-range">Block a stretch</button>
+        </div>
+        <p class="hint">A stretch covers a holiday or a trip away without adding
+          each day one at a time.</p>
       </div>
 
       <div class="field">
@@ -289,6 +317,32 @@ function renderYou() {
     ${renderMyUnlocks(me)}`;
 }
 
+/**
+ * Shown after somebody steps back from an idea. It does not block the change —
+ * the change has already been saved — because an app about inclusiveness has no
+ * business making it hard to say no. It just points out that "no" is rarely the
+ * only true answer: usually there's a condition that would make it a yes, and
+ * saying that is more useful to the group than disappearing from the count.
+ */
+function counterOffer(activity, level) {
+  const out = level === 'no';
+  return `
+    <div class="nudge">
+      <b>${out ? `Out for ${esc(activity.title)} — noted.` : `Marked maybe for ${esc(activity.title)}.`}</b>
+      <p>${out
+        ? `Before you go: is it really the whole idea, or is it the timing? If there's
+           something that <em>would</em> make it work, say that instead — the app can
+           chase it, and “I could if…” keeps you in the count.`
+        : `What's the uncertainty? If you can name it, the group can try to solve it
+           rather than guess around you.`}</p>
+      <div class="sugg-list">
+        <button class="sugg" data-act="nudge-offer">Add an offer<small>“I could, if…”</small></button>
+        <button class="sugg" data-act="nudge-dates">Narrow my dates<small>keep me in, fewer days</small></button>
+        <button class="sugg" data-act="nudge-dismiss">${out ? "No, I'm out" : 'Leave it vague'}<small>that's fine too</small></button>
+      </div>
+    </div>`;
+}
+
 function renderMyUnlocks(me) {
   const list = me.unlocks || [];
   return `
@@ -296,13 +350,31 @@ function renderMyUnlocks(me) {
     <div class="card">
       <p class="hint">Conditional yeses. These don't make a date work — they tell the
         group what to solve to <em>make</em> it work.</p>
-      ${list.length ? `<div style="margin-top:.5rem">${list.map(u => `
+      ${list.length ? `<div style="margin-top:.5rem">${list.map(u => state.editingUnlock === u.id ? `
+        <form class="unlockrow" data-act="edit-unlock-form" data-val="${esc(u.id)}">
+          <div style="flex:1">
+            <input name="condition" type="text"
+                   value="${esc(state.editingUnlockText ?? u.condition)}"
+                   style="width:100%" aria-label="Condition">
+            <div class="daypicker" data-act="unlock-days" data-val="${esc(u.id)}" style="margin-top:.35rem">
+              ${WEEKDAY_MIN.map((m, i) => `<button type="button" data-wd="${i}"
+                aria-label="${WEEKDAY_LONG[i]}"
+                aria-pressed="${(state.editingUnlockDays || []).includes(i)}">${m}</button>`).join('')}
+            </div>
+            <p class="hint">Pick the days this offer covers, or none for any date.</p>
+            <div class="inline-add">
+              <button type="submit" class="btn btn-sm btn-primary">Save</button>
+              <button type="button" class="btn btn-sm btn-ghost" data-act="unlock-cancel">Cancel</button>
+            </div>
+          </div>
+        </form>` : `
         <div class="unlockrow">
-          <div>
+          <div style="flex:1">
             <b>${u.weekdays?.length ? esc(u.weekdays.map(w => WEEKDAY_LONG[w] + 's').join(' & '))
                 : u.dates?.length ? esc(u.dates.map(fmtShort).join(', ')) : 'Any date'}</b>
             <span>if ${esc(u.condition)}</span>
           </div>
+          <button class="btn btn-sm" data-act="edit-unlock" data-val="${esc(u.id)}">Edit</button>
           <button class="rm" data-act="rm-unlock" data-val="${esc(u.id)}" aria-label="Remove">×</button>
         </div>`).join('')}</div>` : '<p class="hint" style="margin-top:.5rem">None yet.</p>'}
       <div class="inline-add" style="margin-top:.5rem">
@@ -353,7 +425,11 @@ function renderGroup() {
       <div class="card person">
         <div class="person-head">
           <b style="flex:1">${esc(x.name)}${x.id === me?.id ? ' <span class="pill">you</span>' : ''}</b>
-          ${!x.claimed ? '<span class="pill">not joined</span>' : ''}
+          ${!x.claimed ? '<span class="pill">invited</span>' : ''}
+          ${!x.claimed ? `<button class="btn btn-sm" data-act="copy-invite-for" data-val="${esc(x.name)}">Link</button>` : ''}
+          ${!x.claimed && (me?.id === p.ownerId || x.invitedBy === me?.id)
+            ? `<button class="rm" data-act="remove-participant" data-val="${x.id}"
+                 data-name="${esc(x.name)}" title="Withdraw this invite">×</button>` : ''}
         </div>
         ${interests ? `<div class="ichips">${interests}</div>` : ''}
         <div class="person-summary">
@@ -367,10 +443,31 @@ function renderGroup() {
   $('#panel-group').innerHTML = `
     <div class="card">
       <h3>Invite people</h3>
-      <p class="hint">One link, no signup. They pick their name and fill in their own availability.</p>
+      <p class="hint">One link for the whole group — they pick their name and fill in
+        their own availability.</p>
       <div class="inline-add" style="margin-top:.5rem">
-        <button class="btn btn-primary btn-sm" data-act="open-share">Share the link</button>
+        <button class="btn btn-primary btn-sm" data-act="open-share">Share the group link</button>
       </div>
+      <p class="hint" style="margin-top:.8rem">Or put a name down and get a link
+        addressed to them. Anyone in the plan can — you don't have to be whoever
+        started it.</p>
+      <form data-act="invite-form" class="inline-add" style="margin-top:.4rem">
+        <input name="name" type="text" placeholder="Kelly" autocomplete="off" style="flex:1;min-width:7rem" required>
+        <button type="submit" class="btn btn-sm">Make a link</button>
+      </form>
+      ${state.invite ? `
+        <div class="suggestions" style="margin-top:.6rem">
+          <h4>Send this to ${esc(state.invite.name)}</h4>
+          <input type="text" readonly value="${esc(state.invite.url)}" id="invite-url"
+                 style="width:100%;margin-bottom:.4rem">
+          <div class="inline-add">
+            <button class="btn btn-sm btn-primary" data-act="copy-invite">Copy link</button>
+            <button class="btn btn-sm" data-act="copy-invite-text">Copy with a message</button>
+            <button class="btn btn-sm btn-ghost" data-act="clear-invite">Done</button>
+          </div>
+          <p class="hint">It just names them, so it's safe to paste anywhere. They tap
+            it and their name is waiting.</p>
+        </div>` : ''}
     </div>
 
     <div class="card">
@@ -798,7 +895,17 @@ document.addEventListener('click', async e => {
   const act = btn.dataset.act;
   const me = meRow();
 
-  // Weekday picker
+  // Weekday picker — the one inside an offer editor scopes that offer, not you.
+  if (btn.dataset.wd !== undefined && btn.closest('[data-act="unlock-days"]')) {
+    const wd = Number(btn.dataset.wd);
+    const field = btn.closest('[data-act="edit-unlock-form"]')?.elements.condition;
+    if (field) state.editingUnlockText = field.value;
+    const cur = new Set(state.editingUnlockDays || []);
+    cur.has(wd) ? cur.delete(wd) : cur.add(wd);
+    state.editingUnlockDays = [...cur].sort((a, b) => a - b);
+    render();
+    return;
+  }
   if (btn.dataset.wd !== undefined && btn.closest('.daypicker')) {
     const wd = Number(btn.dataset.wd);
     const cur = new Set(me.weekdays.length ? me.weekdays : [0, 1, 2, 3, 4, 5, 6]);
@@ -855,10 +962,32 @@ document.addEventListener('click', async e => {
         const level = me.interests?.[btn.dataset.activity]?.level === btn.dataset.status
           ? 'pending' : btn.dataset.status;
         me.interests = { ...(me.interests || {}), [btn.dataset.activity]: { level, note: '' } };
+        // Save first, prompt second: stepping back is always allowed.
+        state.optOut = (level === 'no' || level === 'maybe')
+          ? { activityId: btn.dataset.activity, level } : null;
         render();
         await api.setInterest(state.slug, state.me.token, btn.dataset.activity, level, null);
         await refresh({ quiet: true });
       });
+      break;
+
+    case 'nudge-dismiss': state.optOut = null; render(); break;
+    case 'nudge-offer':
+      state.optOut = null;
+      render();
+      setTimeout(() => {
+        const el = $('[data-act="unlock-text"]');
+        el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        el?.focus();
+      }, 60);
+      break;
+    case 'nudge-dates':
+      state.optOut = null;
+      render();
+      setTimeout(() => {
+        const el = $('[data-act="weekdays"]');
+        el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }, 60);
       break;
 
     case 'add-blackout': {
@@ -879,6 +1008,30 @@ document.addEventListener('click', async e => {
       patchMe({ onlyDates: me.onlyDates.filter(d => d !== btn.dataset.val) }, { immediate: true }); break;
     case 'rm-unlock':
       patchMe({ unlocks: (me.unlocks || []).filter(u => u.id !== btn.dataset.val) }, { immediate: true }); break;
+
+    case 'add-range': {
+      const wrap = btn.closest('.inline-add');
+      const from = wrap.querySelector('[data-act="range-from"]').value;
+      const to = wrap.querySelector('[data-act="range-to"]').value;
+      if (!from || !to) { toast('Pick both ends of the stretch.', true); break; }
+      const [start, end] = daysBetween(from, to) >= 0 ? [from, to] : [to, from];
+      wrap.querySelector('[data-act="range-from"]').value = '';
+      wrap.querySelector('[data-act="range-to"]').value = '';
+      patchMe({ blackoutRanges: [...(me.blackoutRanges || []), { start, end }] }, { immediate: true });
+      break;
+    }
+
+    case 'edit-unlock': {
+      const u = (me.unlocks || []).find(x => x.id === btn.dataset.val);
+      state.editingUnlock = btn.dataset.val;
+      state.editingUnlockDays = [...(u?.weekdays || [])];
+      state.editingUnlockText = u?.condition ?? '';
+      render();
+      break;
+    }
+    case 'unlock-cancel':
+      state.editingUnlock = null; state.editingUnlockDays = null;
+      state.editingUnlockText = null; render(); break;
 
     case 'add-unlock': {
       const input = btn.closest('.inline-add').querySelector('[data-act="unlock-text"]');
@@ -932,6 +1085,26 @@ document.addEventListener('click', async e => {
       break;
 
     case 'go-group': state.tab = 'group'; render(); break;
+
+    case 'copy-invite': copyText(state.invite.url, () => toast('Link copied.')); break;
+    case 'copy-invite-text':
+      copyText(inviteMessage(state.invite.name, state.invite.url), () => toast('Message copied.'));
+      break;
+    case 'clear-invite': state.invite = null; render(); break;
+    case 'copy-invite-for': {
+      const url = inviteURL(btn.dataset.val);
+      copyText(inviteMessage(btn.dataset.val, url), () => toast(`Invite for ${btn.dataset.val} copied.`));
+      break;
+    }
+    case 'remove-participant':
+      if (!confirm(`Withdraw the invite for ${btn.dataset.name}? Anything entered on `
+                 + `their behalf goes with it.`)) break;
+      await guard(async () => {
+        await api.removeParticipant(state.slug, state.me.token, btn.dataset.val);
+        await refresh();
+        toast(`${btn.dataset.name} removed.`);
+      });
+      break;
     case 'open-share': openShare(); break;
 
     case 'copy': {
@@ -1020,6 +1193,31 @@ document.addEventListener('submit', async e => {
       }
     });
   }
+  if (e.target.dataset.act === 'invite-form') {
+    e.preventDefault();
+    const name = e.target.elements.name.value.trim();
+    if (!name) return;
+    await guard(async () => {
+      const res = await api.inviteParticipant(state.slug, state.me.token, name);
+      if (res.joined) { toast(`${name} has already joined.`, true); return; }
+      e.target.elements.name.value = '';
+      state.invite = { name: res.name || name, url: inviteURL(res.name || name) };
+      await refresh();
+    });
+    return;
+  }
+  if (e.target.dataset.act === 'edit-unlock-form') {
+    e.preventDefault();
+    const me2 = meRow();
+    const id = e.target.dataset.val;
+    const condition = e.target.elements.condition.value.trim();
+    if (!condition) { toast('An offer needs a condition.', true); return; }
+    const next = (me2.unlocks || []).map(u => u.id === id
+      ? { ...u, condition, weekdays: state.editingUnlockDays || [] } : u);
+    state.editingUnlock = null; state.editingUnlockDays = null; state.editingUnlockText = null;
+    patchMe({ unlocks: next }, { immediate: true });
+    return;
+  }
   if (e.target.dataset.act === 'edit-activity-form') {
     e.preventDefault();
     await guard(async () => {
@@ -1047,6 +1245,12 @@ document.addEventListener('submit', async e => {
 });
 
 /* ---------------------------------------------------------------- share --- */
+
+function inviteMessage(name, url) {
+  return `${name} — we're trying to sort out ${state.plan.title}`
+       + ` (${fmtRange(state.plan.window.start, state.plan.window.end)}).`
+       + ` Tap here and put in when you could go — no signup, takes a minute:\n${url}`;
+}
 
 function openShare() {
   $('#share-url').value = shareURL();
@@ -1093,6 +1297,9 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) poll
   // A personal link carries a claim token. Verify it before trusting it, then
   // strip it from the address bar so it stops riding along in history and
   // screenshots.
+  state.invitedAs = params.get('for');
+  if (state.invitedAs) history.replaceState({}, '', `?p=${encodeURIComponent(slug)}`);
+
   const token = params.get('me');
   if (token) {
     history.replaceState({}, '', `?p=${encodeURIComponent(slug)}`);

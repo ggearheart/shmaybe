@@ -46,6 +46,7 @@ mysteriously.
 | [`supabase-migration-2.sql`](supabase-migration-2.sql) | `fill_in_for()` — the thread reader |
 | [`supabase-migration-3.sql`](supabase-migration-3.sql) | `whoami()` / `release_participant()` — getting back into your own row |
 | [`supabase-migration-4.sql`](supabase-migration-4.sql) | one level instead of two: the plan is named by its ideas |
+| [`supabase-migration-5.sql`](supabase-migration-5.sql) | invites from any participant, and who may withdraw one |
 
 Or just re-paste [`supabase-schema.sql`](supabase-schema.sql), which contains
 every migration and is safe to run over an existing database — including the

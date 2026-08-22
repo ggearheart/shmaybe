@@ -58,6 +58,10 @@ create index if not exists participants_plan_idx on public.participants(plan_id)
 create unique index if not exists participants_plan_name_idx
   on public.participants(plan_id, lower(name));
 
+-- Added later: who started the plan, and who invited whom.
+alter table public.plans        add column if not exists created_by uuid;
+alter table public.participants add column if not exists invited_by uuid;
+
 create table if not exists public.interests (
   participant_id  uuid not null references public.participants(id) on delete cascade,
   activity_id     uuid not null references public.activities(id) on delete cascade,
@@ -96,6 +100,50 @@ returns uuid language sql stable security definer set search_path = public as $$
   select id from public.plans where slug = p_slug;
 $$;
 
+-- Plans made before ownership was recorded fall back to the first person in
+-- the roster — which is exactly who create_plan inserts first.
+create or replace function public.shmaybe_owner(p_plan uuid)
+returns uuid language sql stable security definer set search_path = public as $$
+  select coalesce(
+    (select pl.created_by from public.plans pl where pl.id = p_plan),
+    (select p.id from public.participants p where p.plan_id = p_plan
+      order by p.created_at limit 1));
+$$;
+
+create or replace function public.create_plan(
+  p_title text, p_start date, p_end date, p_activity text, p_name text)
+returns jsonb language plpgsql volatile security definer set search_path = public as $$
+declare
+  v_slug text; v_plan uuid; v_act uuid; v_part uuid;
+  v_token uuid := gen_random_uuid();
+  v_name text := coalesce(nullif(trim(p_activity), ''), nullif(trim(p_title), ''));
+begin
+  if coalesce(v_name, '') = '' then raise exception 'Say what you want to do'; end if;
+  if p_end < p_start then raise exception 'The window ends before it starts'; end if;
+
+  loop
+    v_slug := public.shmaybe_slug();
+    exit when not exists (select 1 from public.plans where slug = v_slug);
+  end loop;
+
+  insert into public.plans (slug, title, window_start, window_end)
+  values (v_slug, v_name, p_start, p_end) returning id into v_plan;
+
+  insert into public.activities (plan_id, title, proposed_by)
+  values (v_plan, v_name, coalesce(trim(p_name), '')) returning id into v_act;
+
+  if coalesce(trim(p_name), '') <> '' then
+    insert into public.participants (plan_id, name, claim_token)
+    values (v_plan, trim(p_name), v_token) returning id into v_part;
+    insert into public.interests (participant_id, activity_id, level)
+    values (v_part, v_act, 'yes');
+    update public.plans set created_by = v_part where id = v_plan;
+  end if;
+
+  return jsonb_build_object('slug', v_slug, 'participantId', v_part, 'token', v_token);
+end;
+$$;
+
 -- Confirms this token really belongs to this person in this plan.
 create or replace function public.shmaybe_auth(p_slug text, p_token uuid)
 returns uuid language sql stable security definer set search_path = public as $$
@@ -113,12 +161,11 @@ returns jsonb language sql stable security definer set search_path = public as $
   select jsonb_build_object(
     'id', pl.id,
     'slug', pl.slug,
-    -- The oldest surviving idea is the anchor: it's what started this, and it
-    -- doesn't shuffle when a newer alternative scores better.
     'title', coalesce((
       select a.title from public.activities a
       where a.plan_id = pl.id and not a.archived
       order by a.created_at limit 1), pl.title),
+    'ownerId', public.shmaybe_owner(pl.id),
     'window', jsonb_build_object('start', pl.window_start, 'end', pl.window_end),
     'updatedAt', pl.updated_at,
     'activities', coalesce((
@@ -132,6 +179,7 @@ returns jsonb language sql stable security definer set search_path = public as $
       select jsonb_agg(jsonb_build_object(
                'id', p.id, 'name', p.name,
                'claimed', p.claim_token is not null,
+               'invitedBy', p.invited_by,
                'weekdays', p.weekdays, 'blackouts', p.blackouts,
                'blackoutRanges', p.blackout_ranges, 'onlyDates', p.only_dates,
                'noticeDays', p.notice_days, 'note', p.note, 'unlocks', p.unlocks,
@@ -156,12 +204,9 @@ returns jsonb language plpgsql volatile security definer set search_path = publi
 declare
   v_slug text; v_plan uuid; v_act uuid; v_part uuid;
   v_token uuid := gen_random_uuid();
-  -- p_title is vestigial: older clients sent a container name. The idea wins.
   v_name text := coalesce(nullif(trim(p_activity), ''), nullif(trim(p_title), ''));
 begin
-  if coalesce(v_name, '') = '' then
-    raise exception 'Say what you want to do';
-  end if;
+  if coalesce(v_name, '') = '' then raise exception 'Say what you want to do'; end if;
   if p_end < p_start then raise exception 'The window ends before it starts'; end if;
 
   loop
@@ -180,6 +225,7 @@ begin
     values (v_plan, trim(p_name), v_token) returning id into v_part;
     insert into public.interests (participant_id, activity_id, level)
     values (v_part, v_act, 'yes');
+    update public.plans set created_by = v_part where id = v_plan;
   end if;
 
   return jsonb_build_object('slug', v_slug, 'participantId', v_part, 'token', v_token);
@@ -480,6 +526,63 @@ returns timestamptz language sql stable security definer set search_path = publi
   from public.plans pl where pl.slug = p_slug;
 $$;
 
+-- Anyone in a plan can bring somebody else in; inviting twice is harmless.
+create or replace function public.invite_participant(p_slug text, p_token uuid, p_name text)
+returns jsonb language plpgsql volatile security definer set search_path = public as $$
+declare
+  v_caller uuid := public.shmaybe_auth(p_slug, p_token);
+  v_plan   uuid := public.shmaybe_plan_id(p_slug);
+  v_part   uuid;
+  v_claimed uuid;
+begin
+  if v_caller is null then raise exception 'Join the plan before inviting anyone'; end if;
+  if coalesce(trim(p_name), '') = '' then raise exception 'Who are you inviting?'; end if;
+
+  select id, claim_token into v_part, v_claimed from public.participants
+   where plan_id = v_plan and lower(name) = lower(trim(p_name));
+
+  if v_part is null then
+    insert into public.participants (plan_id, name, invited_by)
+    values (v_plan, trim(p_name), v_caller) returning id into v_part;
+    return jsonb_build_object('participantId', v_part, 'name', trim(p_name), 'created', true);
+  end if;
+
+  return jsonb_build_object('participantId', v_part, 'name', trim(p_name),
+                            'created', false, 'joined', v_claimed is not null);
+end;
+$$;
+
+-- Withdraw an invite that was never taken up. Owner or sender only, and
+-- never for somebody who joined — they leave under their own steam.
+create or replace function public.remove_participant(p_slug text, p_token uuid, p_participant uuid)
+returns jsonb language plpgsql volatile security definer set search_path = public as $$
+declare
+  v_caller uuid := public.shmaybe_auth(p_slug, p_token);
+  v_plan   uuid := public.shmaybe_plan_id(p_slug);
+  v_target public.participants%rowtype;
+begin
+  if v_caller is null then raise exception 'Join the plan first'; end if;
+
+  select * into v_target from public.participants
+   where id = p_participant and plan_id = v_plan;
+  if not found then raise exception 'Nobody by that id in this plan'; end if;
+
+  if v_target.claim_token is not null then
+    raise exception '% has joined, so only they can step out', v_target.name
+      using errcode = 'insufficient_privilege';
+  end if;
+
+  if v_caller <> public.shmaybe_owner(v_plan)
+     and v_target.invited_by is distinct from v_caller then
+    raise exception 'Only whoever started the plan, or whoever invited %, can withdraw that', v_target.name
+      using errcode = 'insufficient_privilege';
+  end if;
+
+  delete from public.participants where id = p_participant;
+  return jsonb_build_object('ok', true, 'name', v_target.name);
+end;
+$$;
+
 -- --- Grants ----------------------------------------------------------------
 -- The functions are the entire API surface.
 
@@ -500,8 +603,11 @@ revoke execute on function
   public.update_activity(text, uuid, uuid, text, text),
   public.update_plan(text, uuid, text, date, date),
   public.update_window(text, uuid, date, date),
+  public.invite_participant(text, uuid, text),
+  public.remove_participant(text, uuid, uuid),
   public.plan_pulse(text),
   public.shmaybe_apply_patch(uuid, jsonb),
+  public.shmaybe_owner(uuid),
   public.shmaybe_slug(),
   public.shmaybe_plan_id(text),
   public.shmaybe_auth(text, uuid)
@@ -521,6 +627,8 @@ grant execute on function
   public.update_activity(text, uuid, uuid, text, text),
   public.update_plan(text, uuid, text, date, date),
   public.update_window(text, uuid, date, date),
+  public.invite_participant(text, uuid, text),
+  public.remove_participant(text, uuid, uuid),
   public.plan_pulse(text)
 to anon, authenticated;
 

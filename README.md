@@ -25,13 +25,18 @@ It models planning as a staged constraint search rather than a poll:
 2. **Interest, per idea** — several ideas can compete inside one plan. Everyone
    marks themselves in / maybe / out on each. Only in and maybe constrain the
    search; an "out" stops costing you dates.
-3. **Availability, once** — which weekdays work, dates you're out, a short list
+3. **Changing your mind is the point.** Interest moves freely between in,
+   maybe and out. Stepping back applies immediately — an app about
+   inclusiveness has no business making it hard to say no — but it then offers
+   a counter-offer instead: usually "no" isn't the whole truth, and "I could,
+   if…" keeps you in the count where disappearing doesn't.
+4. **Availability, once** — which weekdays work, dates you're out, a short list
    of dates that *do* work, how much notice you need. You give this a single
    time and it applies to every idea.
-4. **Plain English** — type it the way you'd text it and hit **Read it &
+5. **Plain English** — type it the way you'd text it and hit **Read it &
    suggest**. The parser proposes constraints as chips you tap to accept, and
    never applies anything on its own.
-5. **Inclusivity scoring** — every date is scored by who can make it, with a
+6. **Inclusivity scoring** — every date is scored by who can make it, with a
    *maybe* weighted less than a *yes*. Tap any date to see who's out and why.
 
 ## The parts that do the thinking
@@ -45,6 +50,13 @@ It models planning as a staged constraint search rather than a poll:
   that, if somebody does it, turns a 3-of-4 date into a 4-of-4. Shmaybe
   collects those and hands you the list, and the parser can tell one from the
   other inside a single sentence.
+- **Invites from anyone** — Val can bring Kelly in without going through
+  whoever started the plan: put the name down, get a link addressed to her, and
+  paste it wherever. The link only *names* its recipient — no token — so it's
+  safe in a group chat, and Kelly lands on "Hi Kelly, is that you?" instead of
+  hunting for herself in a list. An invite nobody took up can be withdrawn by
+  the plan's owner or by whoever sent it; somebody who actually joined can only
+  step out themselves.
 - **Read a thread** — people answer by text whether or not you send them a
   link, so paste the group conversation in (or a screenshot of it) and Shmaybe
   splits it by speaker, matches names against the roster, and pulls each

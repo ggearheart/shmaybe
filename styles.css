@@ -424,3 +424,22 @@ dialog select {
 /* The plan is named by its leading idea; alternatives are a footnote to it. */
 .planhead .alt { font-weight: 500; font-size: .8rem; color: var(--ink-3); }
 .actline form .field { margin-bottom: .5rem; }
+
+/* The counter-offer nudge. Deliberately calm: the change already happened, and
+   this is an invitation to say more, not a challenge to the decision. */
+.nudge {
+  margin-top: .7rem; padding: .65rem .75rem; border-radius: 10px;
+  background: var(--brand-soft); border: 1px solid var(--line);
+}
+.nudge b { display: block; font-size: .88rem; }
+.nudge p { margin: .3rem 0 .55rem; font-size: .83rem; color: var(--ink-2); line-height: 1.45; }
+
+#invite-url {
+  padding: .45rem .55rem; font: inherit; font-size: .8rem; color: var(--ink);
+  background: var(--surface); border: 1px solid var(--line); border-radius: 9px;
+}
+.unlockrow form input[type="text"] {
+  padding: .45rem .55rem; font: inherit; font-size: .85rem; color: var(--ink);
+  background: var(--surface-2); border: 1px solid var(--line); border-radius: 9px;
+}
+.unlockrow .daypicker button { max-height: 34px; font-size: .72rem; }

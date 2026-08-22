@@ -49,7 +49,7 @@ export async function createPlan({ title, start, end, activity, name }) {
         interests: {}, updatedAt: stamp() }
     : null;
   d.plans[slug] = {
-    id: uuid(), slug, title: label, window: { start, end },
+    id: uuid(), slug, title: label, createdBy: me ? me.id : null, window: { start, end },
     activities: [{ id: uuid(), title: label, detail: '', proposedBy: name?.trim() || '', createdAt: stamp() }],
     participants: me ? [me] : [],
     updatedAt: stamp(),
@@ -68,6 +68,7 @@ export async function getPlan(slug) {
     // The plan is named by its oldest surviving idea; plan.title is only a
     // fallback for data that predates the one-level model.
     title: p.activities[0]?.title || p.title,
+    ownerId: p.createdBy || p.participants[0]?.id || null,
     participants: p.participants.map(({ claimToken, ...rest }) => ({ ...rest, claimed: !!claimToken })),
   };
 }
@@ -158,6 +159,42 @@ export async function fillInFor(slug, token, name, patch = {}, interests = {}) {
   who.updatedAt = stamp();
   write(d);
   return { participantId: who.id };
+}
+
+export async function inviteParticipant(slug, token, name) {
+  const d = db();
+  const me = auth(d, slug, token);
+  const p = plan(d, slug);
+  const clean = String(name || '').trim();
+  if (!clean) throw new Error('Who are you inviting?');
+
+  const existing = p.participants.find(x => x.name.toLowerCase() === clean.toLowerCase());
+  if (existing) {
+    return { participantId: existing.id, name: clean, created: false, joined: !!existing.claimToken };
+  }
+  const row = { id: uuid(), name: clean, claimToken: null, invitedBy: me.id,
+    weekdays: [], blackouts: [], blackoutRanges: [], onlyDates: [], noticeDays: 0,
+    note: '', unlocks: [], interests: {}, updatedAt: stamp() };
+  p.participants.push(row);
+  write(d);
+  return { participantId: row.id, name: clean, created: true };
+}
+
+export async function removeParticipant(slug, token, participantId) {
+  const d = db();
+  const me = auth(d, slug, token);
+  const p = plan(d, slug);
+  const target = p.participants.find(x => x.id === participantId);
+  if (!target) throw new Error('Nobody by that id in this plan');
+  if (target.claimToken) throw new Error(`${target.name} has joined, so only they can step out`);
+
+  const owner = p.createdBy || p.participants[0]?.id;
+  if (me.id !== owner && target.invitedBy !== me.id) {
+    throw new Error(`Only whoever started the plan, or whoever invited ${target.name}, can withdraw that`);
+  }
+  p.participants = p.participants.filter(x => x.id !== participantId);
+  write(d);
+  return { ok: true, name: target.name };
 }
 
 export async function setInterest(slug, token, activityId, level, note) {
